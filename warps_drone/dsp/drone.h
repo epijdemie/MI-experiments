@@ -51,6 +51,11 @@ class Drone {
       saw_phase_[s] = static_cast<float>(s) * 0.333f;  // stagger
       saw_inc_[s]   = 0.0f;
     }
+    pulse_phase_           = 0.0f;
+    pulse_inc_             = 0.0f;
+    pulse_width_           = 0.5f;
+    pulse_width_target_    = 0.5f;
+    pulse_jitter_counter_  = 0;
 
     lfo_phase_   = 0.0f;
     env_r_       = 0.0f;
@@ -73,57 +78,34 @@ class Drone {
     parameters_.hpf_cutoff         = 1.00f;  // inverted: 1.0 = open, 0.0 = kill
     parameters_.pitch_octave       = 0.50f;  // octave 3 -> C4 base
     parameters_.filter_resonance   = 0.00f;
-    parameters_.burst_shape        = 0.19f;
-    parameters_.pluck_shape        = 0.68f;
-    parameters_.pluck_amplitude    = 0.03f;
-    parameters_.smear              = 0.73f;
-    parameters_.exciter_rate       = 0.50f;
+    parameters_.burst_shape        = 0.00f;  // pluck machinery removed
+    parameters_.pluck_shape        = 0.00f;
+    parameters_.pluck_amplitude    = 0.00f;
+    parameters_.smear              = 0.00f;  // clean reverb for dial-in
+    parameters_.exciter_rate       = 0.00f;  // LFO removed (pulse-osc drives K-S now)
     parameters_.damping            = 0.99f;
     parameters_.noise_floor_base   = 0.00f;
     parameters_.reverb_size        = 0.87f;
-    parameters_.reverb_diffusion   = 0.76f;
+    parameters_.reverb_diffusion   = 0.00f;  // clean reverb for dial-in
     parameters_.reverb_lp          = 0.40f;
     parameters_.reverb_shimmer     = 0.50f;
     parameters_.reverb_shim_rate   = 0.50f;
-    parameters_.reverb_drive       = 0.35f;
+    parameters_.reverb_drive       = 0.00f;  // minimum input gain (0.30)
     parameters_.harmonics          = 0.40f;
     parameters_.modal_brightness   = 0.60f;
     parameters_.modal_stiffness    = 0.20f;
     parameters_.modal_count        = 0.50f;
     parameters_.modal_pickup       = 0.50f;
     parameters_.karplus_lpf        = 0.85f;  // ~8 kHz - tames burst hiss
+    parameters_.pulse_freq         = 0.50f;  // ~28 Hz subbass K-S exciter
   }
 
-  // Re-pluck all KS voices with a shaped noise burst.
-  //
-  // burst_shape (ALGO unshifted on KARPLUS page) morphs the burst's
-  // amplitude envelope between four shapes, clockwise:
-  //   0.00  gate         (short fixed 10 ms rect - discrete "click")
-  //   0.33  negative saw (decaying ramp, full pluck length)
-  //   0.67  triangle     (rise then fall, full pluck length)
-  //   1.00  saw          (rising ramp / swell, full pluck length)
-  //
-  // pluck_shape (PARAM unshifted) sets the burst's full length:
-  // 5 ms (sharp tick) up to 600 ms (slow swell). Length is honoured
-  // from bs=0.333 upward; below that the length is interpolated down
-  // toward a fixed ~10 ms gate so the rect end of the morph reads as a
-  // discrete pulse, not as a sustained noise floor.
-  // pluck_amplitude (ALGO shifted) sets the burst's peak amplitude.
+  // Plucks have been removed - the pulse oscillator on PERFORMANCE
+  // SMALL is the K-S exciter now. Pluck() is kept as a no-op so any
+  // residual call site (e.g. external trigger detection if it ever
+  // gets reconnected) compiles, but it does nothing audible.
   inline void Pluck() {
-    // Pluck amplitude scaled to be on the same order as the steady-state
-    // noise floor (which sits around 0.18 in the loop at high settings),
-    // so plucks accent rather than overpower the continuous noise drone.
-    const float amp  = parameters_.pluck_amplitude * 0.10f;
-    const float bs   = parameters_.burst_shape;
-    const float full = 0.005f + 0.595f * parameters_.pluck_shape;
-    constexpr float kGateSeconds = 0.010f;
-    const float u    = bs < 0.333333f ? bs * 3.0f : 1.0f;
-    const float length = kGateSeconds + (full - kGateSeconds) * u;
-    const int   n      = static_cast<int>(length * sample_rate_);
-    voices_.Excite(amp, n, bs);
-    // Saw stack is a continuous drone underneath the plucked bank -
-    // it doesn't get re-excited per pluck. Its job is to anchor the
-    // bass register, not to add pluck transients.
+    // no-op
   }
 
   DroneParameters* mutable_parameters() { return &parameters_; }
@@ -190,25 +172,34 @@ class Drone {
                                      * kSubLpfHz * inv_sample_rate_);
     sub_lpf_a_ = a_sub;
 
-    // Exciter LFO: a *trigger generator*. exciter_rate=0 -> off;
-    // otherwise fires a Pluck() each cycle at rate_hz. Range 0..30 Hz.
-    // Suppressed while an external trigger is active on IN R - patch
-    // a clock there and the internal LFO yields automatically.
-    const float rate_norm = parameters_.exciter_rate;
-    const float rate_hz   = rate_norm * rate_norm * 30.0f;
-    // ~4 s timeout @ 1.5 kHz block rate. If no IN R trigger for that
-    // long, internal LFO resumes.
-    const bool external_active = blocks_since_ext_trig_ < 6000;
-    if (rate_hz > 0.01f && !external_active) {
-      lfo_phase_ += rate_hz * block_in_seconds_;
-      if (lfo_phase_ >= 1.0f) {
-        lfo_phase_ -= 1.0f;
-        Pluck();
-      }
-    } else {
-      lfo_phase_ = 0.0f;
+    // Pulse-osc K-S excitation source. Replaces the internal noise
+    // burst as the primary drive for the strings - a bipolar pulse
+    // oscillator whose rich harmonic content feeds every K-S string in
+    // the bank, getting filtered into pitch by each string's resonance
+    // (the same trick that makes the Strega-via-IN-L route sound good,
+    // now self-contained). The pulse width random-walks slowly between
+    // 0.40 and 0.60 for a slight jittery growl.
+    //
+    // Frequency: log 50 Hz..250 Hz, mapped from parameters_.pulse_freq
+    // (PERFORMANCE PARAM unshifted, +CV). Default knob 0.50 -> ~112 Hz.
+    const float pulse_hz = 50.0f * powf(5.0f, parameters_.pulse_freq);
+    pulse_inc_ = pulse_hz * inv_sample_rate_;
+
+    // Re-roll the PWM target every ~50 ms (75 blocks at the 1.5 kHz
+    // block rate). Smooth one-pole interpolation toward the target
+    // happens per-sample in the inner loop, so even abrupt new targets
+    // produce a continuous width slide rather than a click.
+    ++pulse_jitter_counter_;
+    if (pulse_jitter_counter_ >= 75) {
+      pulse_jitter_counter_ = 0;
+      pulse_width_target_ =
+          0.40f + stmlib::Random::GetFloat() * 0.20f;
     }
-    if (blocks_since_ext_trig_ < 1000000) ++blocks_since_ext_trig_;
+
+    // Exciter LFO / external-trigger Pluck dispatch - removed. The K-S
+    // bank is now driven continuously by the pulse oscillator (see
+    // sample loop), so there's no per-event trigger to fire. Members
+    // lfo_phase_ / blocks_since_ext_trig_ kept for ABI but unused.
 
     // Continuous noise floor is driven *only* by noise_floor_base now
     // - the old `strength` slot has been repurposed as the burst-shape
@@ -226,7 +217,7 @@ class Drone {
     // when you wants the "constantly excited" sound. Smear also
     // bumped 4× so it's clearly audible alongside the damping noise.
     const float total_noise_floor =
-        floor_base * floor_base * 0.050f                        // primary fuel
+        floor_base * floor_base * 0.150f                        // primary fuel - 3× headroom now that the perm pluck stream is gone
       + d * d * 0.012f                                          // dark-side noise
       + reverb_send_ * parameters_.smear * rev_a * 0.100f;      // gated smear (4×)
     voices_.set_noise_floor(total_noise_floor);
@@ -283,11 +274,15 @@ class Drone {
     // here - the reverb runs with its clouds-original LFO modulation.
     // -----------------------------------------------------------------
     reverb_.set_amount    (parameters_.reverb_amount);
-    reverb_.set_input_gain(0.30f + 0.50f * parameters_.reverb_drive); // 0.30..0.80
+    // Input gain range pulled down (0.15..0.40, was 0.30..0.80). The
+    // hot pulse-driven K-S + saw sum was slamming the diffuser chain
+    // even at drive=0; halving the reverb's input window gives the
+    // long-tail loop room to breathe. Knob still sweeps a useful 8 dB.
+    reverb_.set_input_gain(0.15f + 0.25f * parameters_.reverb_drive);
     // 0.30..1.00 - at full CW the all-pass loop is at unity gain and
     // the reverb freezes (effectively infinite tail / drone hold).
     reverb_.set_time      (0.30f + 0.70f * parameters_.reverb_size);
-    reverb_.set_diffusion (0.30f + 0.65f * parameters_.reverb_diffusion); // 0.30..0.95 - wider audible spread
+    reverb_.set_diffusion (0.95f * parameters_.reverb_diffusion);          // 0.00..0.95 - knob CCW now fully kills the input allpasses
     reverb_.set_lp        (0.20f + 0.70f * parameters_.reverb_lp);    // 0.20..0.90
 
     // -----------------------------------------------------------------
@@ -303,14 +298,27 @@ class Drone {
       const float c = rect > env_r_ ? 0.20f : 0.002f;
       env_r_ += c * (rect - env_r_);
 
-      // 1. KS voice bank, with audio L mixed into each loop input.
-      float voice = voices_.Process(audio_l * kAudioExcite);
+      // 0. Pulse-osc excitation. Advance the phase, smooth the PWM
+      //    width toward its current random target, render a ±1 pulse.
+      pulse_phase_ += pulse_inc_;
+      if (pulse_phase_ >= 1.0f) pulse_phase_ -= 1.0f;
+      pulse_width_ += 0.001f * (pulse_width_target_ - pulse_width_);
+      const float pulse_out = pulse_phase_ < pulse_width_ ? 1.0f : -1.0f;
+
+      // 1. KS voice bank, with pulse-osc + external audio L mixed into
+      //    each loop input. The strings filter the broadband pulse
+      //    energy into pitch at their tuned chord positions. Pulse
+      //    injection halved (0.025) so the K-S resonance can't pile
+      //    up enough energy to slam the reverb at high pitches -
+      //    per-cycle damping shrinks as delay shortens, and the old
+      //    0.05 injection was overdriving past ~C5 root.
+      const float ks_input = audio_l * kAudioExcite + pulse_out * 0.025f;
+      float voice = voices_.Process(ks_input);
       // 1a. Saw-stack sub - three naive saws following the chord
       //     ratios, summed and averaged, then post-LPF'd at ~600 Hz so
-      //     it stays in the bass register. Mix gain is low (0.15)
-      //     because the saws are continuous full-scale oscillators -
-      //     anything higher slams the reverb input on top of the K-S
-      //     bank's own peaks.
+      //     it stays in the bass register. Mix gain dropped to 0.08
+      //     for a colder sub bed that doesn't pile up at the reverb
+      //     input alongside the K-S bank's peaks.
       float saw_sum = 0.0f;
       for (int s = 0; s < 3; ++s) {
         saw_phase_[s] += saw_inc_[s];
@@ -319,13 +327,15 @@ class Drone {
       }
       saw_sum *= (1.0f / 3.0f);
       sub_lpf_state_ += sub_lpf_a_ * (saw_sum - sub_lpf_state_);
-      voice += sub_lpf_state_ * 0.15f;
+      voice += sub_lpf_state_ * 0.08f;
       // 2. Modal resonator excited by the same source.
       const float modal_out = modal_.Process(voice);
       // 3. Sum. Modal mix locked to the stable_v1 value (red SHIMMER
       //    page is disabled - the knob still moves, just no effect).
-      constexpr float kHarmonicsLocked = 0.40f;
-      float mixed = voice + modal_out * kHarmonicsLocked;
+      // Modal-bank mix: user-controllable via KARPLUS BIG + shift
+      // (parameters_.harmonics). 0 -> modal off -> cleaner reverb;
+      // higher -> richer/washier harmonic forest.
+      float mixed = voice + modal_out * parameters_.harmonics;
       // 3a. KS-side LPF - kills broadband hiss generated by burst noise
       //     and string excitation. Bypassed entirely when the knob is
       //     full CW so the K-S/modal output passes through untouched.
@@ -340,23 +350,41 @@ class Drone {
       // 5. Tape delay (mix coefficient 0 = defeated for now).
       float delay_wet = delay_.Process(filtered);
       float pre_reverb = filtered + delay_wet * 0.0f;
-      // 6. Write stereo input for the reverb (mono pre-reverb).
+
+      // 6. Reverb-send side-chain. Two envelope followers on |signal|:
+      //      env_rev_fast_  ~50 ms time constant (tracks pluck/burst
+      //                     transients and per-block level shifts)
+      //      env_rev_slow_  ~2 s time constant (laggy avg of the fast
+      //                     envelope - this is the "level the reverb
+      //                     is currently willing to accept")
+      //    Gain = slow / fast, clamped to ≤1. When the source jumps
+      //    up the gain temporarily drops, suppressing the spike from
+      //    hitting the diffuser. Over a couple of seconds the slow
+      //    env catches up, gain returns to 1, the wash fills in.
+      //    Quiet->quiet or steady -> gain ≈ 1, no effect.
+      //    The reverb's own feedback loop is untouched, so the tail
+      //    length set by reverb_size stays as long as ever.
+      const float abs_x = pre_reverb < 0.0f ? -pre_reverb : pre_reverb;
+      env_rev_fast_ += 0.0004f  * (abs_x         - env_rev_fast_);
+      env_rev_slow_ += 0.00001f * (env_rev_fast_ - env_rev_slow_);
+      float scd_gain = (env_rev_fast_ > 1e-6f)
+                          ? (env_rev_slow_ / env_rev_fast_)
+                          : 1.0f;
+      if (scd_gain > 1.0f) scd_gain = 1.0f;
+      pre_reverb *= scd_gain;
+
+      // 7. Soft-limit as a final cap on whatever made it past the
+      //    side-chain. Near-linear under ±0.7, Padé-smooth above.
+      pre_reverb = stmlib::SoftLimit(pre_reverb);
+
+      // 8. Write stereo input for the reverb (mono pre-reverb).
       in_out[i].l = pre_reverb;
       in_out[i].r = pre_reverb;
     }
 
-    // Schmitt trigger on audio-in-R envelope. ~10 ms refractory.
-    if (trig_refractory_ > 0) {
-      --trig_refractory_;
-    } else if (!trig_armed_ && env_r_ > 0.12f) {
-      Pluck();
-      trig_flag_              = true;
-      trig_armed_             = true;
-      trig_refractory_        = 15;
-      blocks_since_ext_trig_  = 0;        // mark external clock active
-    } else if (trig_armed_ && env_r_ < 0.04f) {
-      trig_armed_ = false;
-    }
+    // External-trigger Pluck dispatch removed (plucking is out - pulse
+    // osc drives the K-S continuously). The audio-in-R envelope follower
+    // above still runs in case a future feature wants it.
 
     // 7. Plate reverb in place.
     reverb_.Process(in_out, n);
@@ -398,6 +426,20 @@ class Drone {
   // pitch at -2/-3 oct.
   float            saw_phase_[3]   = {0.0f, 0.0f, 0.0f};
   float            saw_inc_[3]     = {0.0f, 0.0f, 0.0f};
+  // Pulse-osc excitation for the K-S bank. Subsonic (~25 Hz) bipolar
+  // pulse with a slow random PWM jitter - the chord stack's strings
+  // filter its harmonic content into pitch (analogue of Strega -> IN L).
+  float            pulse_phase_           = 0.0f;
+  float            pulse_inc_             = 0.0f;
+  float            pulse_width_           = 0.5f;
+  float            pulse_width_target_    = 0.5f;
+  uint16_t         pulse_jitter_counter_  = 0;
+  // Reverb-send side-chain envelopes. env_rev_fast_ tracks the
+  // instantaneous level; env_rev_slow_ lags ~2 s behind. The gain
+  // applied to the reverb input is min(1, slow/fast), so new energy
+  // from the K-S bank / saws ramps slowly into the tail.
+  float            env_rev_fast_          = 0.0f;
+  float            env_rev_slow_          = 0.0f;
   // Post-saw one-pole LPF (~600 Hz) - softens the saw discontinuities
   // and keeps sub HF out of the chord band.
   float            sub_lpf_state_  = 0.0f;

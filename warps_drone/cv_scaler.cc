@@ -33,42 +33,49 @@ inline float ClampUnit(float v) {
 // physical pot position so the first-engagement jump is small.
 
 // ALGO   :  chord stack      | chord mode      |
-//           burst shape      | pluck amp       |
+//           damping          | modal mix       |
 //           reverb size      | predelay (NYI)  |
-//           harmonics        | modal count
+//           reserved         | modal count
+// KARPLUS shifted ALGO (idx 3) is the modal-bank mix; default 0.40
+// reproduces the previous locked value so first boot sounds identical
+// to before the knob was exposed.
 constexpr float kAlgoDefaults[8]   = {
-    0.49f, 0.91f, 0.19f, 0.03f, 0.87f, 0.00f, 0.40f, 0.50f
+    0.49f, 0.91f, 0.99f, 0.40f, 0.87f, 0.00f, 0.40f, 0.50f
 };
 
-// PARAM  :  LPF cutoff       | HPF cutoff      |
-//           pluck shape      | damping         |
+// PARAM  :  pulse freq       | reserved        |
+//           white/pink mix   | reserved        |
 //           diffusion        | smear           |
 //           modal bright     | pickup
-// HPF cutoff is inverted on the knob (CW = open, CCW = silence) so the
-// default sits at 1.00 to mean "fully open" - same audible meaning as
-// the old 0.00 default before the inversion.
+// PERFORMANCE PARAM unshifted is the K-S exciter pulse-osc frequency
+// (log 50 Hz..250 Hz). KARPLUS PARAM unshifted is noise spectrum mix
+// (0 = pink, 1 = white). REVERB diffusion (idx 4) and smear (idx 5)
+// default to 0 so the reverb starts clean while dialling in sources.
 constexpr float kParamDefaults[8]  = {
-    0.73f, 1.00f, 0.68f, 0.99f, 0.76f, 0.73f, 0.60f, 0.50f
+    0.50f, 1.00f, 0.50f, 0.00f, 0.00f, 0.00f, 0.60f, 0.50f
 };
 
 // LVL1   :  pitch octave     | pitch (semitones)|
-//           exciter rate     | ks LPF cutoff   |
+//           ks LPF cutoff    | reserved        |
 //           reverb lp        | reverb drive    |
 //           modal stiffness  | shimmer depth
 // ks LPF default 0.85 -> ~8 kHz, bright but with the worst hiss tamed.
+// REVERB-page reverb_drive (idx 5) defaulted to 0 so reverb input gain
+// sits at its minimum (0.30) - clean baseline for dial-in.
 constexpr float kLvl1Defaults[8]   = {
-    0.60f, 0.66f, 0.50f, 0.85f, 0.40f, 0.35f, 0.20f, 0.50f
+    0.60f, 0.66f, 0.85f, 0.00f, 0.40f, 0.00f, 0.20f, 0.50f
 };
 
-// LVL2   :  reverb amount    | filter Q        |
-//           noise floor base | white/pink mix  |
+// LVL2   :  LPF cutoff       | HPF cutoff      |
+//           noise floor base | reserved        |
 //           reverb amount    | reserved        |
 //           dynamics         | shimmer rate
-// REVERB-page LVL2 unshifted is the duplicate of PERFORMANCE LVL2
-// unshifted (both feed reverb_amount); defaults match so the first
-// boot reads the same level either way.
+// PERFORMANCE LVL2 hosts both filters (unshifted = LPF, shifted = HPF,
+// inverted). KARPLUS noise floor default 0.20 - some baseline noise
+// fuel so the K-S has something to chew on out of the box. Reverb wet
+// lives on REVERB-page LVL2 unshifted now - no more PERF/REVERB dup.
 constexpr float kLvl2Defaults[8]   = {
-    0.44f, 0.00f, 0.00f, 0.00f, 0.44f, 0.50f, 0.00f, 0.50f
+    0.73f, 1.00f, 0.20f, 0.00f, 0.44f, 0.50f, 0.00f, 0.50f
 };
 
 }  // namespace
@@ -254,15 +261,18 @@ void CvScaler::Read(DroneParameters* p, ControlPage page, bool shifted) {
   // Page 0 unshifted slots, plus CV summed in for the four CV-able ones.
   // ----------------------------------------------------------------
   p->chord         = ClampUnit(algorithm_.committed(Slot(PAGE_PERFORMANCE, false)) + algo_cv);
-  p->lpf_cutoff    = ClampUnit(timbre_   .committed(Slot(PAGE_PERFORMANCE, false)) + timbre_cv);
-  // LVL1 unshifted = octave selector (coarse, 7 zones). Octave on the
-  // primary layer is more performance-relevant than fine semitone tuning
-  // - and because PAGE_PERFORMANCE unshifted slots follow the live pot
-  // at boot (not journalled), this means the octave is always whatever
-  // the physical pot reads. Fine semitone pitch lives on the shifted
-  // layer and DOES get persisted.
+  // PARAM unshifted on PERFORMANCE = K-S exciter pulse-osc frequency.
+  // The pulse-osc replaces the internal noise burst as the primary
+  // K-S excitation; its harmonic content gets filtered into pitch by
+  // each string in the chord bank (same trick as Strega-via-IN-L).
+  p->pulse_freq    = ClampUnit(timbre_   .committed(Slot(PAGE_PERFORMANCE, false)) + timbre_cv);
+  // LVL1 unshifted = octave selector; PERF-unshifted slots are journal-
+  // excluded so this always follows the live pot at boot. Fine semitone
+  // pitch lives on the shifted layer and DOES get persisted.
   p->pitch_octave  = ClampUnit(level1_   .committed(Slot(PAGE_PERFORMANCE, false)));
-  p->reverb_amount = ClampUnit(level2_   .committed(Slot(PAGE_PERFORMANCE, false)) + l2_cv);
+  // LVL2 unshifted = LPF cutoff (moved here from PARAM unshifted to make
+  // room for the pulse-freq knob). LVL2 CV follows the parameter.
+  p->lpf_cutoff    = ClampUnit(level2_   .committed(Slot(PAGE_PERFORMANCE, false)) + l2_cv);
 
   // Stash the *calibrated* V/oct value (in semitones from C-something)
   // where Drone expects it. We piggyback on reserved_a (an internal
@@ -276,21 +286,31 @@ void CvScaler::Read(DroneParameters* p, ControlPage page, bool shifted) {
   // Page 0 shifted
   // ----------------------------------------------------------------
   p->chord_mode       = algorithm_.committed(Slot(PAGE_PERFORMANCE, true));
-  p->hpf_cutoff       = timbre_   .committed(Slot(PAGE_PERFORMANCE, true));
+  // PARAM shifted: reserved (previously HPF, now on LVL2 shifted).
   p->pitch            = level1_   .committed(Slot(PAGE_PERFORMANCE, true));
-  p->filter_resonance = level2_   .committed(Slot(PAGE_PERFORMANCE, true));
+  // LVL2 shifted = HPF cutoff (inverted on knob, CW = open).
+  p->hpf_cutoff       = level2_   .committed(Slot(PAGE_PERFORMANCE, true));
+  // filter_resonance unplugged - left at the Init default (Q = 0.7,
+  // Butterworth-flat). Re-expose on a future slot if it becomes useful.
 
   // ----------------------------------------------------------------
   // Page 1 KARPLUS
   // ----------------------------------------------------------------
-  p->burst_shape      = algorithm_.committed(Slot(PAGE_KARPLUS,     false));
-  p->pluck_shape      = timbre_   .committed(Slot(PAGE_KARPLUS,     false));
-  p->exciter_rate     = level1_   .committed(Slot(PAGE_KARPLUS,     false));
+  // KARPLUS page - plucking machinery removed. The four unshifted slots
+  // are tone-shaping the K-S strings; all shifted slots are reserved.
+  //   BIG    unshifted = damping             |  shifted = reserved
+  //   SMALL  unshifted = white/pink mix      |  shifted = reserved
+  //   LVL1   unshifted = ks LPF cutoff       |  shifted = reserved
+  //   LVL2   unshifted = noise floor base    |  shifted = reserved
+  p->damping          = algorithm_.committed(Slot(PAGE_KARPLUS,     false));
+  p->white_pink_mix   = timbre_   .committed(Slot(PAGE_KARPLUS,     false));
+  p->karplus_lpf      = level1_   .committed(Slot(PAGE_KARPLUS,     false));
   p->noise_floor_base = level2_   .committed(Slot(PAGE_KARPLUS,     false));
-  p->pluck_amplitude  = algorithm_.committed(Slot(PAGE_KARPLUS,     true));
-  p->damping          = timbre_   .committed(Slot(PAGE_KARPLUS,     true));
-  p->karplus_lpf      = level1_   .committed(Slot(PAGE_KARPLUS,     true));
-  p->white_pink_mix   = level2_   .committed(Slot(PAGE_KARPLUS,     true));
+  // BIG + shift on KARPLUS = modal-bank mix. Lives here so you
+  // can dial the harmonic-forest density (cleaner ↔ washier reverb)
+  // from the same page that shapes the K-S tone.
+  p->harmonics        = algorithm_.committed(Slot(PAGE_KARPLUS,     true));
+  // Other shifted-layer slots on KARPLUS are still reserved.
 
   // ----------------------------------------------------------------
   // Page 2 REVERB
@@ -299,28 +319,14 @@ void CvScaler::Read(DroneParameters* p, ControlPage page, bool shifted) {
   //   LVL1  unshifted = reverb_lp        |  shifted = reverb_drive
   //   LVL2  unshifted = reverb_amount    |  shifted = reverb_res_b (reserved)
   //
-  // LVL2 unshifted is a duplicate of the canonical PERFORMANCE LVL2
-  // unshifted "rev wet" slot - so it sits on the same physical pot
-  // position across both pages and the wet level reads consistently
-  // whether or not shift is held. CV is applied symmetrically (both
-  // canonical and alias add l2_cv) - without that, an unpatched CV
-  // jack at mid-rail would make the wet "kick" when you switch pages.
+  // Reverb wet lives ONLY here now (no longer mirrored on PERFORMANCE
+  // LVL2). LVL2 CV no longer routes to wet - the PERFORMANCE LVL2 CV
+  // jack now controls LPF cutoff. Wet is knob-only.
   // ----------------------------------------------------------------
   p->reverb_size      = algorithm_.committed(Slot(PAGE_REVERB,      false));
   p->reverb_diffusion = timbre_   .committed(Slot(PAGE_REVERB,      false));
   p->reverb_lp        = level1_   .committed(Slot(PAGE_REVERB,      false));
-  if (page == PAGE_PERFORMANCE && !shifted) {
-    // Active on PERF page (unshifted): canonical PERF LVL2 -> REVERB-dup.
-    level2_.SetCommitted(Slot(PAGE_REVERB, false),
-                         level2_.committed(Slot(PAGE_PERFORMANCE, false)));
-  } else if (page == PAGE_REVERB && !shifted) {
-    // Active on REVERB page (unshifted): REVERB-dup -> canonical PERF,
-    // and apply CV directly to the parameter from the dup committed.
-    level2_.SetCommitted(Slot(PAGE_PERFORMANCE, false),
-                         level2_.committed(Slot(PAGE_REVERB, false)));
-    p->reverb_amount = ClampUnit(
-        level2_.committed(Slot(PAGE_REVERB, false)) + l2_cv);
-  }
+  p->reverb_amount    = level2_   .committed(Slot(PAGE_REVERB,      false));
   p->reverb_predelay  = algorithm_.committed(Slot(PAGE_REVERB,      true));
   p->smear            = timbre_   .committed(Slot(PAGE_REVERB,      true));
   p->reverb_drive     = level1_   .committed(Slot(PAGE_REVERB,      true));
@@ -329,7 +335,8 @@ void CvScaler::Read(DroneParameters* p, ControlPage page, bool shifted) {
   // ----------------------------------------------------------------
   // Page 3 SHIMMER & GLIMMER (DSP disabled; values still tracked)
   // ----------------------------------------------------------------
-  p->harmonics        = algorithm_.committed(Slot(PAGE_SHIMMER,     false));
+  // SHIMMER ALGO unshifted: was harmonics, now moved to KARPLUS shift.
+  // Slot is reserved.
   p->modal_brightness = timbre_   .committed(Slot(PAGE_SHIMMER,     false));
   p->modal_stiffness  = level1_   .committed(Slot(PAGE_SHIMMER,     false));
   p->dynamics         = level2_   .committed(Slot(PAGE_SHIMMER,     false));
