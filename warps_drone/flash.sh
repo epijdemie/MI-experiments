@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Flash warps_drone via Olimex ARM-USB-OCD-H over JTAG.
-# Run from repo root after `TOOLCHAIN_PATH=... make -f warps_drone/makefile`.
+# flash warps_drone via olimex arm-usb-ocd-h, jtag.
+# run from repo root after `TOOLCHAIN_PATH=... make -f warps_drone/makefile`
 set -euo pipefail
 
 OCD="$HOME/opt/xpack-openocd-0.12.0-3/bin/openocd"
@@ -13,7 +13,7 @@ if [[ ! -f "$ELF" ]]; then
   exit 1
 fi
 
-# stmlib's make-all leaves the .bin stale; regenerate from the fresh .elf.
+# stmlib's make-all leaves .bin stale - regenerate from fresh .elf
 "$HOME/opt/arm-gnu-toolchain-13.3.rel1-darwin-arm64-arm-none-eabi/bin/arm-none-eabi-objcopy" \
   -O binary "$ELF" "$BIN"
 

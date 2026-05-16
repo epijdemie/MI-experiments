@@ -13,8 +13,7 @@ void CvScaler::Init() {
   adc_.Init();
   std::fill(&lp_state_[0], &lp_state_[ADC_LAST], 0.0f);
 
-  // Generic neutral initial values; HandleModeChange() will repaint these
-  // from the active mode's defaults once Ui::Init runs.
+  // neutral seeds - HandleModeChange repaints from mode defaults
   algorithm_.Init(0.5f, 0.5f);
   timbre_   .Init(0.5f, 0.5f);
   level1_   .Init(0.5f, 0.5f);
@@ -25,8 +24,6 @@ void CvScaler::Init() {
 }
 
 void CvScaler::HandleModeChange(const ModeConfig& cfg) {
-  // Reset each pot's committed values to the new mode's defaults and
-  // re-arm movement detection.
   algorithm_.Reset(
       ReadSlot(cfg.defaults, cfg.algorithm.unshifted),
       ReadSlot(cfg.defaults, cfg.algorithm.shifted));
@@ -66,24 +63,18 @@ void CvScaler::UpdateLpf() {
 
 namespace {
 
-// Apply pot + CV onto a soft-takeover'd value and write the result into the
-// parameter slot identified by id. CV is centred (0.5 at idle); a ±5V swing
-// roughly maps to ±0.5 of parameter range.
+// pot+cv -> soft-takeover'd param. cv is bipolar around 0.5 (±5V -> ±0.5)
 inline void Dispatch(SoftTakeover* st,
                      float pot, float cv, int layer,
                      ParameterId unshifted_id, ParameterId shifted_id,
                      ReverbParameters* p) {
-  // Tick soft-takeover with this layer's reading.
   (void)st->Process(pot, layer);
 
-  // Always write the UNSHIFTED parameter from committed[0] + CV; this stays
-  // live regardless of which layer is currently active (so external CV
-  // keeps modulating even while you is editing shifted params).
+  // unshifted always live (cv keeps modulating during shift edits)
   float v = st->committed(0) + cv;
   CONSTRAIN(v, 0.0f, 1.0f);
   *WriteSlot(p, unshifted_id) = v;
 
-  // SHIFTED parameter from committed[1] (no CV).
   *WriteSlot(p, shifted_id) = st->committed(1);
 }
 
@@ -95,16 +86,12 @@ void CvScaler::Read(ReverbParameters* p, bool shifted,
 
   const int layer = shifted ? 1 : 0;
 
-  // Pot readings (lowpassed).
   const float algo_pot   = lp_state_[ADC_ALGORITHM_POT];
   const float timbre_pot = lp_state_[ADC_PARAMETER_POT];
   const float l1_pot     = lp_state_[ADC_LEVEL_1_POT];
   const float l2_pot     = lp_state_[ADC_LEVEL_2_POT];
 
-  // CV inputs are bipolar around 0.5 idle. Invert sign so a positive CV
-  // raises the parameter (the ADC is wired such that idle reads ~0.5 and
-  // increasing voltage decreases the float reading - same convention as
-  // stock warps' cv_scaler.cc).
+  // cv bipolar around 0.5; +V drops the reading (stock warps convention)
   const float algo_cv   = 0.5f - lp_state_[ADC_ALGORITHM_CV];
   const float timbre_cv = 0.5f - lp_state_[ADC_PARAMETER_CV];
   const float l1_cv     = 0.5f - lp_state_[ADC_LEVEL_1_CV];
@@ -119,7 +106,7 @@ void CvScaler::Read(ReverbParameters* p, bool shifted,
   Dispatch(&level2_,    l2_pot,     l2_cv,     layer,
            mode_cfg.level2.unshifted,    mode_cfg.level2.shifted,    p);
 
-  // Movement flag - distinguish shift gesture from short tap.
+  // movement flag - separates shift gesture from a tap
   constexpr float kMoveThreshold = 0.01f;
   const float now[4] = { algo_pot, timbre_pot, l1_pot, l2_pot };
   for (int i = 0; i < 4; ++i) {

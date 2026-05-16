@@ -2,8 +2,7 @@
 
 namespace warps_reverb {
 
-// Sink for PARAM_NONE writes. CvScaler dispatches into this when a mapping
-// slot is unbound; the slot still has a pot+CV reading us, we just discard.
+// PARAM_NONE sink - unbound mapping slots dispatch here
 static float g_param_sink = 0.0f;
 
 float* WriteSlot(ReverbParameters* p, ParameterId id) {
@@ -46,10 +45,8 @@ float ReadSlot(const ReverbParameters& p, ParameterId id) {
 
 const ModeConfig kModeTable[MODE_COUNT] = {
 
-  // ---- Mode 0: clean reverb (LED off) ----
-  // Hall-class delay lines, feedback ceiling at unity, matrix-gain
-  // compensation in the feedback path so the saturator only engages on
-  // transients. Defaults tuned for an immediate hall character on power-up.
+  // mode 0: clean reverb (LED off).
+  // hall delay lines, unity fb ceiling, matrix-gain comp in fb path
   {
     .name = "reverb",
     .defaults = {
@@ -62,9 +59,9 @@ const ModeConfig kModeTable[MODE_COUNT] = {
       .dry_wet   = 0.5f,
       .shimmer   = 0.0f,
       .tone      = 0.7f,
-      .filter    = 0.0f,           // unused in mode 0
-      .noise     = 0.0f,           // unused in mode 0
-      .drive     = 0.0f,           // unused in mode 0
+      .filter    = 0.0f,
+      .noise     = 0.0f,
+      .drive     = 0.0f,
       .freeze    = false,
     },
     .algorithm = { PARAM_DECAY,   PARAM_SHIMMER },
@@ -85,97 +82,79 @@ const ModeConfig kModeTable[MODE_COUNT] = {
     .osc_red = 0, .osc_green = 0,
   },
 
-  // ---- Mode 1: drone (LED green) ----
-  // The first-iteration character: feedback ceiling 1.25, no matrix-gain
-  // compensation, no diffusion. The FDN saturator engages continuously and
-  // the loop self-oscillates musically. The big knob is bound to MOTION
-  // (the parameter formerly known as Depth) because that's what produced
-  // sci-fi sweeps when you was playing the self-oscillating loop -
-  // sweeping LFO amplitude modulates the loop's pitch character. Speed
-  // (LFO rate) sits on LEVEL 1 primary. Decay defaults high to boot us
-  // straight into the self-osc territory.
+  // mode 1: drone (LED green) - ks string + outer fb loop per channel.
+  // decay = fb gain (activates ~0.6+). decouple_tilt selects ks path
   {
     .name = "drone",
     .defaults = {
-      // Hecker-style starting point: 4-voice unison with mild drift, lots
-      // of space, dark low-pass character, audible grain.
-      .size      = 0.6f,
-      .decay     = 0.7f,          // long sustaining tail by default
-      .diffusion = 0.5f,
-      .motion    = 0.4f,
-      .speed     = 0.1f,
-      .pre_delay = 0.0f,
-      .dry_wet   = 1.0f,
-      .shimmer   = 0.0f,
-      .tone      = 0.3f,          // dark default - per-branch LPF held low
-      .filter    = 0.0f,
-      .noise     = 0.12f,         // gentle bed - too much seeds squeal
-      .drive     = 0.0f,          // clean at default - sweep up for grit
-      .freeze    = false,
-    },
-    .algorithm = { PARAM_DRIVE,     PARAM_DECAY },
-    .timbre    = { PARAM_FILTER,    PARAM_SIZE },
-    .level1    = { PARAM_SPEED,     PARAM_MOTION },
-    .level2    = { PARAM_PRE_DELAY, PARAM_NOISE },
-    .dsp = {
-      // Long-tail drone: high feedback floor + low ceiling overshoot.
-      // The per-branch LPF (always on in drone now) damps high frequencies
-      // each circulation, so we can push feedback near unity without
-      // the loop turning into a tea kettle.
-      .feedback_min        = 0.88f,
-      .feedback_max        = 1.05f,
-      .matrix_comp         = 1.0f,
-      .decouple_tilt       = true,
-      .matrix_alpha        = 1.0f,
-      .show_clip_warning   = false,
-      .osc_amplitude       = 0.10f,   // slightly less drive into the loop
-      .noise_amplitude     = 0.04f,
-      .motion_wobbles_tilt = true,
-    },
-    .osc_red = 0, .osc_green = 255,
-  },
-
-  // ---- Mode 2: noise pad (LED orange) ----
-  // Noise-excited stationary pad. No oscillators - filtered brown noise drives
-  // the FDN directly. Orthogonal Hadamard matrix + near-unity feedback + SVF
-  // recirculating -> dense smeared cloud that sustains without audio input.
-  // External signal folds in via wet_in and gets absorbed into the pad.
-  //
-  // ALGO = Noise density, TIMBRE = Filter morph (LP->HP). Secondary mapping
-  // mirrors drone so the two modes share muscle memory on shifted controls.
-  {
-    .name = "noise-pad",
-    .defaults = {
-      .size      = 0.6f,
+      .size      = 0.5f,
       .decay     = 0.75f,
       .diffusion = 0.5f,
-      .motion    = 0.2f,
-      .speed     = 0.1f,
-      .pre_delay = 0.0f,
-      .dry_wet   = 1.0f,
+      .motion    = 0.3f,          // fb_delay (~30ms)
+      .speed     = 0.0f,
+      .pre_delay = 0.35f,         // pitch (~85Hz)
+      .dry_wet   = 0.5f,
       .shimmer   = 0.0f,
-      .tone      = 0.5f,
-      .filter    = 0.0f,
+      .tone      = 0.6f,
+      .filter    = 0.55f,         // outer-loop lp
       .noise     = 0.5f,
       .drive     = 0.0f,
       .freeze    = false,
     },
-    .algorithm = { PARAM_NOISE,   PARAM_DECAY },
-    .timbre    = { PARAM_FILTER,  PARAM_SIZE },
-    .level1    = { PARAM_SPEED,   PARAM_MOTION },
-    .level2    = { PARAM_DRY_WET, PARAM_PRE_DELAY },
+    .algorithm = { PARAM_PRE_DELAY, PARAM_FILTER },
+    .timbre    = { PARAM_TONE,      PARAM_MOTION },
+    .level1    = { PARAM_DECAY,     PARAM_DRIVE },
+    .level2    = { PARAM_DRY_WET,   PARAM_NOISE },
     .dsp = {
-      .feedback_min        = 0.5f,
-      .feedback_max        = 1.05f,
-      .matrix_comp         = 1.0f,
+      .feedback_min        = 0.0f,
+      .feedback_max        = 1.0f,
+      .matrix_comp         = 0.7f,
       .decouple_tilt       = true,
-      .matrix_alpha        = 1.0f,   // Hadamard locked - energy preserved
+      .matrix_alpha        = 1.0f,
       .show_clip_warning   = false,
       .osc_amplitude       = 0.0f,
-      .noise_amplitude     = 0.06f,
-      .motion_wobbles_tilt = true,
+      .noise_amplitude     = 0.0f,
+      .motion_wobbles_tilt = false,
     },
-    .osc_red = 255, .osc_green = 255,  // orange (red + green on bicolor LED)
+    .osc_red = 0, .osc_green = 255,
+  },
+
+  // mode 2: harsh / erbe-overshoot (LED orange).
+  // same dsp path as mode 0 but fb_max=1.25, no matrix comp - saturator
+  // engages hot. timbre primary = diffusion (vs size)
+  {
+    .name = "first-audible",
+    .defaults = {
+      .size      = 0.5f,
+      .decay     = 0.7f,
+      .diffusion = 0.0f,
+      .motion    = 0.05f,
+      .speed     = 0.2f,
+      .pre_delay = 0.0f,
+      .dry_wet   = 0.5f,
+      .shimmer   = 0.0f,
+      .tone      = 0.5f,
+      .filter    = 0.0f,
+      .noise     = 0.0f,
+      .drive     = 0.0f,
+      .freeze    = false,
+    },
+    .algorithm = { PARAM_DECAY,     PARAM_TONE },
+    .timbre    = { PARAM_DIFFUSION, PARAM_SIZE },
+    .level1    = { PARAM_MOTION,    PARAM_SPEED },
+    .level2    = { PARAM_DRY_WET,   PARAM_PRE_DELAY },
+    .dsp = {
+      .feedback_min        = 0.0f,
+      .feedback_max        = 1.25f,
+      .matrix_comp         = 1.0f,
+      .decouple_tilt       = false,
+      .matrix_alpha        = -1.0f,
+      .show_clip_warning   = true,
+      .osc_amplitude       = 0.0f,
+      .noise_amplitude     = 0.0f,
+      .motion_wobbles_tilt = false,
+    },
+    .osc_red = 255, .osc_green = 255,  // orange
   },
 };
 

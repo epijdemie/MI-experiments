@@ -1,4 +1,6 @@
-// Drone-machine firmware for Warps. Entry point.
+// drone firmware for warps - entry point
+
+#include <math.h>
 
 #include "warps/drivers/codec.h"
 #include "warps/drivers/system.h"
@@ -12,8 +14,14 @@
 using namespace warps_drone;
 using namespace stmlib;
 
-// 32 KB plate reverb buffer in main SRAM (.bss).
-uint16_t reverb_buffer[PlateReverb::kBufferSize];
+// 64k plate reverb buffer in ccm. NOLOAD, cleared in PlateReverb::Init
+float reverb_buffer[PlateReverb::kBufferSize]
+    __attribute__((section(".ccmdata")));
+
+// overdrive: dc blocker + tone lpf state
+float dist_dc_xl_ = 0.0f, dist_dc_yl_ = 0.0f;
+float dist_dc_xr_ = 0.0f, dist_dc_yr_ = 0.0f;
+float dist_tone_l_ = 0.0f, dist_tone_r_ = 0.0f;
 
 warps::Codec   codec;
 warps::System  sys;
@@ -51,9 +59,7 @@ void FillBuffer(warps::Codec::Frame* input,
   cv_scaler.Read(drone.mutable_parameters(), ui.page(), ui.shifted());
   ui.Poll();
 
-  // Pass the codec input straight to Drone:
-  //   scratch[i].l = audio excitement (mixed into the KS loop)
-  //   scratch[i].r = envelope follower input (trigger/gate/LFO)
+  // IN L -> ks excitation. IN R unused
   for (size_t i = 0; i < n; ++i) {
     scratch[i].l = input[i].l * kIntToFloat;
     scratch[i].r = input[i].r * kIntToFloat;
@@ -61,32 +67,76 @@ void FillBuffer(warps::Codec::Frame* input,
 
   drone.Process(scratch, n);
 
-  // External trigger still fires Pluck() inside Drone (audio in R).
-  // We used to flash the OSC LED on each rising edge - that's been
-  // dropped per user request; the steady page color stays untouched.
-  (void)drone.TakeTriggerFlag();
+  // overdrive: drive | warmth (tube↔fuzz) | tone | bias.
+  // dc-blocker before chain - reverb tail accumulates DC, would flat-
+  // line saturator. hard bypass <0.5% to match soft-takeover dead zone
+  const float dist_raw = drone.distortion_amount();
+  const float dist     = dist_raw > 0.005f ? dist_raw : 0.0f;
+  if (dist > 0.0f) {
+    const float warmth   = drone.distortion_warmth();
+    const float hardness = 1.0f - warmth;
+    // drive ceiling: tube=1 -> 4×, fuzz=0 -> 12×
+    const float drive    = 1.0f + dist * (11.0f - warmth * 8.0f);
+    // asym bias for even harmonics; bias_offset re-centres post-sat
+    const float bias        = drone.distortion_bias() * 0.4f;
+    const float bias_offset = bias / sqrtf(1.0f + bias * bias);
+    // tone: log 200Hz..18kHz, knob 1 = wide open
+    const float tone_knob = drone.distortion_tone();
+    const float fc = 200.0f * powf(90.0f, tone_knob);
+    const float two_pi_inv_sr = 6.2831853f / kSampleRate;
+    const float tone_a = 1.0f - expf(-two_pi_inv_sr * fc);
+    for (size_t i = 0; i < n; ++i) {
+      // dc block
+      const float dl = scratch[i].l - dist_dc_xl_ + 0.9995f * dist_dc_yl_;
+      const float dr = scratch[i].r - dist_dc_xr_ + 0.9995f * dist_dc_yr_;
+      dist_dc_xl_ = scratch[i].l;  dist_dc_yl_ = dl;
+      dist_dc_xr_ = scratch[i].r;  dist_dc_yr_ = dr;
+      // pre-sat
+      const float xl = dl * drive + bias;
+      const float xr = dr * drive + bias;
+      // saturator - smooth ↔ hard by warmth
+      const float smooth_l = xl / sqrtf(1.0f + xl * xl);
+      const float smooth_r = xr / sqrtf(1.0f + xr * xr);
+      const float hard_l   = xl >  1.0f ?  1.0f : (xl < -1.0f ? -1.0f : xl);
+      const float hard_r   = xr >  1.0f ?  1.0f : (xr < -1.0f ? -1.0f : xr);
+      float satl = smooth_l + (hard_l - smooth_l) * hardness - bias_offset;
+      float satr = smooth_r + (hard_r - smooth_r) * hardness - bias_offset;
+      // tone lpf
+      dist_tone_l_ += tone_a * (satl - dist_tone_l_);
+      dist_tone_r_ += tone_a * (satr - dist_tone_r_);
+      satl = dist_tone_l_;
+      satr = dist_tone_r_;
+      // dist-weighted crossfade into dry
+      scratch[i].l += (satl - scratch[i].l) * dist;
+      scratch[i].r += (satr - scratch[i].r) * dist;
+    }
+  }
 
-  // Output-stage gain, now driven by the PERFORMANCE-page LVL1 shift
-  // knob (drone.output_gain() maps 0..1 -> 0.5×..6×). SoftLimit catches
-  // peaks; very high gain settings will harmonically clip the output.
   const float output_gain = drone.output_gain();
 
+  // crossfade SoftLimit out as dist rises - saturator already bounds
   float peak = 0.0f;
   for (size_t i = 0; i < n; ++i) {
     float l = scratch[i].l * output_gain;
     float r = scratch[i].r * output_gain;
+    const float sl_l = SoftLimit(l);
+    const float sl_r = SoftLimit(r);
+    l = sl_l + (l - sl_l) * dist;
+    r = sl_r + (r - sl_r) * dist;
     float a = l > 0 ? l : -l;
     float b = r > 0 ? r : -r;
     if (a > peak) peak = a;
     if (b > peak) peak = b;
-    output[i].l = static_cast<int16_t>(SoftLimit(l) * kFloatToInt);
-    output[i].r = static_cast<int16_t>(SoftLimit(r) * kFloatToInt);
+    output[i].l = static_cast<int16_t>(
+        Clip16(static_cast<int32_t>(l * kFloatToInt)));
+    output[i].r = static_cast<int16_t>(
+        Clip16(static_cast<int32_t>(r * kFloatToInt)));
   }
   ui.set_peak(peak);
 }
 
 void Init() {
-  // sys.Init(false) -> don't offset VTOR. We link at 0x08000000, no bootloader.
+  // sys.Init(false) - no VTOR offset (link at 0x08000000, no bootloader)
   sys.Init(false);
   version.Init();
 
@@ -107,11 +157,7 @@ void Init() {
 int main(void) {
   Init();
   while (1) {
-    // Audio work happens entirely in the codec ISR. The only thing
-    // the main loop owns is the autosave window: when CvScaler sees
-    // ~10 s of knob idleness with dirty state, it stages a flash
-    // write here. Writes block the audio briefly (~one block) but
-    // happen seldom (typically once per editing session).
+    // audio runs in codec isr. main loop owns the autosave window only
     cv_scaler.MaybeSave();
   }
 }

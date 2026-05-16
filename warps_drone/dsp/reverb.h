@@ -1,16 +1,7 @@
-// Plate reverb - Griesinger topology (Dattorro paper): 4 input allpass
-// diffusers, then a loop of two parallel (2 allpass + 1 delay) sections,
-// cross-coupled for stereo. Modulated allpass and modulated long delay
-// give built-in chorus/shimmer.
-//
-// Adapted from clouds/dsp/fx/reverb.h (Émilie Gillet, MIT). Differences:
-//   - namespace warps_drone
-//   - LFO rates re-derived at Init() from the actual sample rate
-//     (clouds hardcoded 32 kHz; we run at 48 kHz)
-//   - Slightly different default diffusion / lp values
-//
-// Memory: a single 32 KB uint16_t buffer (16384 samples, 12-bit compressed).
-// Pass the buffer into Init(); the engine doesn't allocate.
+// plate reverb - griesinger / dattorro topology.
+// adapted from clouds/dsp/fx/reverb.h (émilie gillet, MIT). LFO rates
+// re-derived from sample rate (clouds was 32k, here 48k).
+// memory: 32k uint16 buffer (16384 × 12-bit compressed)
 
 #ifndef WARPS_DRONE_DSP_REVERB_H_
 #define WARPS_DRONE_DSP_REVERB_H_
@@ -29,7 +20,7 @@ class PlateReverb {
   PlateReverb() { }
   ~PlateReverb() { }
 
-  void Init(uint16_t* buffer, float sample_rate) {
+  void Init(float* buffer, float sample_rate) {
     engine_.Init(buffer);
     sample_rate_  = sample_rate;
     lp_           = 0.7f;
@@ -41,44 +32,63 @@ class PlateReverb {
     shimmer_rate_  = 1.0f;
     lp_decay_1_   = 0.0f;
     lp_decay_2_   = 0.0f;
+    lp_decay_1b_  = 0.0f;
+    lp_decay_2b_  = 0.0f;
     UpdateLfos();
   }
 
-  // Processes a stereo block in place. amount_ is wet/dry mix.
-  // Returns the post-mix block via in_out, plus accumulates the running
-  // mean-square of the "wet" signal so the caller can derive a feedback
-  // send energy.
+  // stereo block in place. accumulates wet RMS for fb send energy
   void Process(FloatFrame* in_out, size_t size) {
+    // 16384 samp budget. 4 input AP + 2×6 loop AP + 2 combs (= 16 AP).
+    // all prime lengths
     typedef E::Reserve<113,
       E::Reserve<162,
       E::Reserve<241,
-      E::Reserve<399,
-      E::Reserve<1653,
-      E::Reserve<2038,
-      E::Reserve<3411,
-      E::Reserve<1913,
+      E::Reserve<397,
+      E::Reserve<311,
+      E::Reserve<547,
+      E::Reserve<829,
+      E::Reserve<1607,
+      E::Reserve<2017,
+      E::Reserve<1499,
+      E::Reserve<379,
+      E::Reserve<631,
+      E::Reserve<919,
       E::Reserve<1663,
-      E::Reserve<4782> > > > > > > > > > Memory;
-    E::DelayLine<Memory, 0> ap1;
-    E::DelayLine<Memory, 1> ap2;
-    E::DelayLine<Memory, 2> ap3;
-    E::DelayLine<Memory, 3> ap4;
-    E::DelayLine<Memory, 4> dap1a;
-    E::DelayLine<Memory, 5> dap1b;
-    E::DelayLine<Memory, 6> del1;
-    E::DelayLine<Memory, 7> dap2a;
-    E::DelayLine<Memory, 8> dap2b;
-    E::DelayLine<Memory, 9> del2;
+      E::Reserve<1907,
+      E::Reserve<2069> > > > > > > > > > > > > > > > Memory;
+    E::DelayLine<Memory, 0>  ap1;
+    E::DelayLine<Memory, 1>  ap2;
+    E::DelayLine<Memory, 2>  ap3;
+    E::DelayLine<Memory, 3>  ap4;
+    E::DelayLine<Memory, 4>  dap1a;
+    E::DelayLine<Memory, 5>  dap1b;
+    E::DelayLine<Memory, 6>  dap1c;
+    E::DelayLine<Memory, 7>  dap1d;
+    E::DelayLine<Memory, 8>  dap1e;
+    E::DelayLine<Memory, 9>  del1;
+    E::DelayLine<Memory, 10> dap2a;
+    E::DelayLine<Memory, 11> dap2b;
+    E::DelayLine<Memory, 12> dap2c;
+    E::DelayLine<Memory, 13> dap2d;
+    E::DelayLine<Memory, 14> dap2e;
+    E::DelayLine<Memory, 15> del2;
     E::Context c;
 
-    const float kap = diffusion_;
-    const float klp = lp_;
-    const float krt = reverb_time_;
+    // slew diffusion (~33ms TC) to keep AP coefs stable across knob jumps
+    diffusion_smooth_ += 0.02f * (diffusion_ - diffusion_smooth_);
+    const float kap  = diffusion_smooth_;
+    const float klp  = lp_;
+    // 2nd cascaded 1-pole, gentler - pair = 12dB/oct rolloff
+    const float klp2 = klp * 0.6f;
+    const float krt  = reverb_time_;
     const float amount = amount_;
     const float gain = input_gain_;
 
-    float lp_1 = lp_decay_1_;
-    float lp_2 = lp_decay_2_;
+    float lp_1  = lp_decay_1_;
+    float lp_2  = lp_decay_2_;
+    float lp_1b = lp_decay_1b_;
+    float lp_2b = lp_decay_2b_;
     float wet_l_acc = 0.0f;
     float wet_r_acc = 0.0f;
 
@@ -103,12 +113,21 @@ class PlateReverb {
       c.Write(apout);
 
       c.Load(apout);
-      c.Interpolate(del2, 4680.0f, LFO_2, 100.0f * shimmer_depth_, krt);
+      // del2 length is now 2069; mod read max = 2000 + 40 = 2040 ≤ 2069.
+      // del2 = 2069; max mod read 2000+40 ≤ 2069
+      c.Interpolate(del2, 2000.0f, LFO_2, 40.0f * shimmer_depth_, krt);
       c.Lp(lp_1, klp);
+      c.Lp(lp_1b, klp2);
       c.Read(dap1a TAIL, -kap);
       c.WriteAllPass(dap1a, kap);
       c.Read(dap1b TAIL, kap);
       c.WriteAllPass(dap1b, -kap);
+      c.Read(dap1c TAIL, -kap);
+      c.WriteAllPass(dap1c, kap);
+      c.Read(dap1d TAIL, kap);
+      c.WriteAllPass(dap1d, -kap);
+      c.Read(dap1e TAIL, -kap);
+      c.WriteAllPass(dap1e, kap);
       c.Write(del1, 2.0f);
       c.Write(wet, 0.0f);
 
@@ -118,10 +137,17 @@ class PlateReverb {
       c.Load(apout);
       c.Read(del1 TAIL, krt);
       c.Lp(lp_2, klp);
+      c.Lp(lp_2b, klp2);
       c.Read(dap2a TAIL, kap);
       c.WriteAllPass(dap2a, -kap);
       c.Read(dap2b TAIL, -kap);
       c.WriteAllPass(dap2b, kap);
+      c.Read(dap2c TAIL, kap);
+      c.WriteAllPass(dap2c, -kap);
+      c.Read(dap2d TAIL, -kap);
+      c.WriteAllPass(dap2d, kap);
+      c.Read(dap2e TAIL, kap);
+      c.WriteAllPass(dap2e, -kap);
       c.Write(del2, 2.0f);
       c.Write(wet, 0.0f);
 
@@ -131,8 +157,10 @@ class PlateReverb {
       ++in_out;
     }
 
-    lp_decay_1_ = lp_1;
-    lp_decay_2_ = lp_2;
+    lp_decay_1_  = lp_1;
+    lp_decay_2_  = lp_2;
+    lp_decay_1b_ = lp_1b;
+    lp_decay_2b_ = lp_2b;
     tail_energy_ = 0.5f * (wet_l_acc + wet_r_acc);
   }
 
@@ -144,15 +172,14 @@ class PlateReverb {
 
   inline void set_shimmer_depth(float d) { shimmer_depth_ = d; }
   inline void set_shimmer_rate (float r) {
-    if (r < 0.05f) r = 0.05f;   // never freeze the LFOs
+    if (r < 0.05f) r = 0.05f;
     if (r != shimmer_rate_) {
       shimmer_rate_ = r;
       UpdateLfos();
     }
   }
 
-  // Running mean-square of the wet signal across the last Process() call.
-  // Caller uses this to drive a "reverb tail -> exciter" feedback path.
+  // last-block wet RMS - drives reverb->exciter feedback
   inline float tail_energy() const { return tail_energy_; }
 
  private:
@@ -161,7 +188,7 @@ class PlateReverb {
     engine_.SetLFOFrequency(LFO_2, (0.3f * shimmer_rate_) / sample_rate_);
   }
 
-  typedef FxEngine<kBufferSize, FORMAT_12_BIT> E;
+  typedef FxEngine<kBufferSize, FORMAT_32_BIT> E;
   E engine_;
 
   float sample_rate_;
@@ -174,6 +201,9 @@ class PlateReverb {
   float shimmer_rate_;
   float lp_decay_1_;
   float lp_decay_2_;
+  float lp_decay_1b_;
+  float lp_decay_2b_;
+  float diffusion_smooth_ = 0.0f;
   float tail_energy_ = 0.0f;
 
   DISALLOW_COPY_AND_ASSIGN(PlateReverb);

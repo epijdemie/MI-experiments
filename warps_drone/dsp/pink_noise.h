@@ -1,11 +1,5 @@
-// Pink (1/f) noise generator - Paul Kellet's IIR approximation.
-//
-// Six cascaded 1-pole filters fed by white noise sum to a -3 dB/octave
-// slope that's within ±0.05 dB of true pink across most of the audio
-// band. ~6 multiplies + 6 adds per sample, no LUT.
-//
-// Output is scaled to roughly ±1 - peaks may slightly exceed unity but
-// rarely past ±1.1.
+// pink (1/f) noise - paul kellet IIR. 6 cascaded 1-poles, -3dB/oct.
+// out ~±1 (peaks ~±1.1)
 
 #ifndef WARPS_DRONE_DSP_PINK_NOISE_H_
 #define WARPS_DRONE_DSP_PINK_NOISE_H_

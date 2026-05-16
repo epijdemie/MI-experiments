@@ -45,3 +45,6 @@ build
 *_BETA.sch
 *_beta.brd
 *_BETA.brd
+
+# Per-project handover notes (contain personal context)
+HANDOVER.md

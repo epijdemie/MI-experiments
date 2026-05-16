@@ -12,29 +12,23 @@ using clouds::LFO_2;
 
 constexpr size_t Reverb::kBufferSize;
 
-// Co-prime base delays at 48 kHz (samples). ~44/59/75/92 ms - hall-class
-// spread that spaces the comb-filter modes wider than the original Erbe
-// ballpark, avoiding the Karplus-Strong/comb character of shorter lines.
-// All four values are primes so they're trivially co-prime.
+// co-prime base delays @ 48k. ~44/59/75/92ms (hall spread)
 namespace {
 constexpr float kBaseDelay0 = 2089.0f;
 constexpr float kBaseDelay1 = 2843.0f;
 constexpr float kBaseDelay2 = 3617.0f;
 constexpr float kBaseDelay3 = 4421.0f;
 
-constexpr float kPreDelayMaxSamples = 4800.0f;  // 100 ms @ 48 kHz
+constexpr float kPreDelayMaxSamples = 4800.0f;  // 100ms @ 48k
 
-// Smooth saturator: y = x / √√(1 + x⁴). Strictly bounded ±1, smooth knee,
-// near-linear in the |x| < 0.5 range so moderate signals pass cleanly while
-// hot peaks compress gradually. Much less "harsh" than the previous tanh-
-// style hard clip - no kink at the threshold, no abrupt hard clip.
+// smooth sat: y = x / ⁴√(1 + x⁴). bounded ±1, smooth knee
 inline float SmoothSat(float x) {
   const float x2 = x * x;
   const float x4 = x2 * x2;
   return x / stmlib::Sqrt(stmlib::Sqrt(1.0f + x4));
 }
 
-// Bipolar white noise in [-1, 1] from stmlib's PRNG.
+// bipolar white noise, ±1
 inline float WhiteNoise() {
   const uint32_t w = stmlib::Random::GetWord();
   return static_cast<int32_t>(w) * (1.0f / 2147483648.0f);
@@ -60,8 +54,53 @@ void Reverb::Init(uint16_t* buffer, float sample_rate) {
   noise_max_ = 0.0f;
   noise_lp_state_ = 0.0f;
   for (int i = 0; i < 4; ++i) { svf_lp_[i] = 0.0f; svf_bp_[i] = 0.0f; }
-  svf_f_base_ = 0.06f;    // ~460 Hz cutoff at 48 kHz - dark drone floor
-  svf_q_ = 1.6f;          // heavier damping - kills any residual ringing
+
+  std::memset(ks_buffer_, 0, sizeof(ks_buffer_));
+  std::memset(fb_buffer_, 0, sizeof(fb_buffer_));
+  for (int i = 0; i < 2; ++i) {
+    ks_write_[i] = 0;
+    ks_dc_x1_[i] = 0.0f;
+    ks_dc_y1_[i] = 0.0f;
+    ks_damping_state_[i] = 0.0f;
+    ks_delay_samples_[i] = 200.0f;
+    ks_drift_phase_[i] = static_cast<float>(i) * 1.13f;
+    ks_drift_phase_inc_[i] = 0.0f;
+    fb_write_[i] = 0;
+    svf_lp_drone_[i] = 0.0f;
+    svf_bp_drone_[i] = 0.0f;
+    in_loop_hp_state_[i] = 0.0f;
+  }
+  ks_drift_depth_ = 0.0f;
+  svf_f_base_drone_ = 0.1f;
+  svf_q_base_drone_ = 1.0f;
+
+  std::memset(rvb_comb_a_, 0, sizeof(rvb_comb_a_));
+  std::memset(rvb_comb_b_, 0, sizeof(rvb_comb_b_));
+  std::memset(rvb_comb_c_, 0, sizeof(rvb_comb_c_));
+  std::memset(rvb_comb_d_, 0, sizeof(rvb_comb_d_));
+  std::memset(rvb_ap_la_, 0, sizeof(rvb_ap_la_));
+  std::memset(rvb_ap_lb_, 0, sizeof(rvb_ap_lb_));
+  std::memset(rvb_ap_ra_, 0, sizeof(rvb_ap_ra_));
+  std::memset(rvb_ap_rb_, 0, sizeof(rvb_ap_rb_));
+  for (int i = 0; i < 4; ++i) {
+    rvb_comb_w_[i] = 0;
+    rvb_comb_lp_[i] = 0.0f;
+    rvb_ap_w_[i] = 0;
+  }
+  rvb_mix_ = 0.0f;
+  rvb_feedback_ = 0.92f;
+  rvb_damping_ = 0.3f;
+  drone_base_noise_ = 0.0f;
+  ks_internal_damp_ = 0.95f;
+  ks_damping_coef_ = 0.5f;
+  drone_fb_gain_ = 0.0f;
+  drone_fb_delay_samples_ = 1000.0f;
+  drone_drive_ = 1.0f;
+  drone_lp_coef_ = 1.0f;
+  drone_hp_coef_ = 0.0f;
+  drone_noise_amp_ = 0.0f;
+  svf_f_base_ = 0.115f;   // ~880 Hz cutoff at 48 kHz - slightly darker
+  svf_q_ = 1.4f;          // Butterworth-ish damping - no ringing peak
   filter_morph_ = 0.0f;
   drive_factor_ = 1.0f;
   motion_wobbles_tilt_ = false;
@@ -71,13 +110,7 @@ void Reverb::Init(uint16_t* buffer, float sample_rate) {
   engine_.Init(buffer);
   std::memset(lpf_state_, 0, sizeof(lpf_state_));
 
-  // Two LFOs at fixed multiplied frequencies - Erbe's multiphase scheme uses
-  // four phases of one sine; FxEngine gives us two LFOs, which we'll mix via
-  // sign-flip to synthesize four effective phases across the branches.
-  // Frequencies set in Tick() from parameters_.speed.
-
-  // Placeholder defaults - Ui::Init/EnterMode overwrites these from the
-  // active mode's ModeConfig.defaults before the first audio block runs.
+  // placeholder defaults - Ui::EnterMode overwrites before first block
   parameters_.size      = 0.5f;
   parameters_.decay     = 0.5f;
   parameters_.diffusion = 0.0f;
@@ -94,45 +127,26 @@ void Reverb::Init(uint16_t* buffer, float sample_rate) {
 void Reverb::Tick() {
   coef_input_gain_ = 0.5f;
   coef_pre_delay_samples_ = parameters_.pre_delay * kPreDelayMaxSamples;
-  // Diffusion is independent of Size. Max stays at Erbe's 0.8 ceiling.
   coef_diffusion_ = 0.8f * parameters_.diffusion;
-  // Decay knob mapping: mode-specific linear interpolation between
-  // feedback_min_ (knob CCW) and feedback_max_ (knob CW). Mode 0 uses
-  // (0, 1.0) - knob CCW fully kills the tail. Mode 1 uses (0.7, 1.75) -
-  // knob CCW still gives a long tail, knob CW pushes deep into self-osc.
   coef_feedback_ = feedback_min_ +
                    parameters_.decay * (feedback_max_ - feedback_min_);
 
-  // Tilt LPF baseline. Mode 0 = motion-coupled. Drone (decouple_tilt_) reads
-  // from the dedicated Tone parameter instead. In drone mode the actual
-  // per-sample LPF coefficient is modulated around this baseline by the
-  // motion LFO (see Process).
+  // tilt lpf baseline. drone reads from tone; motion lfo modulates per-sample
   if (decouple_tilt_) {
-    // Drone-mode tilt baseline: darker range. k=0.05 ≈ 390 Hz, k=0.4 ≈ 4 kHz.
-    // The per-branch one-pole LPF is the main thing taming high-frequency
-    // squeal in the long feedback loop, so its baseline lives in dark
-    // territory by default and Tone opens it up.
-    coef_tilt_lpf_ = 0.05f + 0.35f * parameters_.tone;
+    coef_tilt_lpf_ = 0.3f + 0.68f * parameters_.tone;
   } else {
     coef_tilt_lpf_ = 0.55f + 0.44f * parameters_.motion;
   }
 
-  // FDN delay LFO depth - always driven by Motion. This is what gives the
-  // pitch-territory shimmer to the reverb tail; combined with the tilt LPF
-  // wobble in drone mode, the whole spectrum breathes in step.
+  // fdn delay lfo depth from motion
   coef_mod_amplitude_ = parameters_.motion * 0.6f;
 
-  // Drone voice bank base pitch + drift LFO rates. Logarithmic 60 -> 500 Hz
-  // for the carrier; drift LFOs run at base_rate × (7,11,13,17) / 7 so they
-  // never align (Hecker's "wandering" character). Base drift rate scaled by
-  // parameters_.speed (very slow at default - Hecker drones drift over many
-  // seconds).
+  // drone osc + drift LFOs. carrier log 60..500Hz. drift rates × prime
+  // ratios so they never align
   if (osc_amplitude_ > 0.0f) {
     const float osc_hz = 60.0f * exp2f(parameters_.pre_delay * 3.06f);
     osc_phase_inc_ = 2.0f * static_cast<float>(M_PI) * osc_hz / sample_rate_;
 
-    // Drift rates: base 0.04 Hz (period ~25 s) × prime ratios. Speed knob
-    // multiplies the base up to ~2 Hz at max.
     const float base_drift_hz = 0.04f + parameters_.speed * 1.96f;
     constexpr float kPrimes[4] = { 7.0f, 11.0f, 13.0f, 17.0f };
     for (int i = 0; i < 4; ++i) {
@@ -142,8 +156,7 @@ void Reverb::Tick() {
     }
   }
 
-  // Motion LFO (sample-rate sine, used to modulate the SVF cutoff in drone
-  // mode and the tilt LPF coefficient in mode 0). Speed maps to 0.1–50 Hz.
+  // motion lfo modulates svf cutoff (drone) or tilt lpf (mode 0). 0.1..50Hz
   if (motion_wobbles_tilt_) {
     const float mod_hz = 0.1f + parameters_.speed * 49.9f;
     motion_lfo_phase_inc_ =
@@ -154,19 +167,15 @@ void Reverb::Tick() {
     motion_lfo_depth_ = 0.0f;
   }
 
-  // SVF morph parameter snapshot.
   filter_morph_ = parameters_.filter;
 
-  // Drive: pre-saturator gain in feedback path. 1× = clean limiting, 5× =
-  // heavy harmonic distortion. The smooth saturator clamps anyway so this
-  // controls *character*, not loudness - adds harmonics rather than volume.
+  // 1× clean -> 5× harmonic - saturator clamps so this is character not gain
   drive_factor_ = 1.0f + parameters_.drive * 4.0f;
 
   coef_dry_wet_ = parameters_.dry_wet;
 
-  // Two LFOs at f and f·1.41 - incommensurate ratio for richer modulation
-  // when the four branches reference them with alternating signs.
-  const float lfo_hz = 0.1f + parameters_.speed * 49.9f;  // 0.1..50 Hz
+  // 2 lfos at f and f·1.41 - incommensurate
+  const float lfo_hz = 0.1f + parameters_.speed * 49.9f;
   engine_.SetLFOFrequency(LFO_1, lfo_hz / sample_rate_);
   engine_.SetLFOFrequency(LFO_2, lfo_hz * 1.41f / sample_rate_);
 
@@ -174,47 +183,285 @@ void Reverb::Tick() {
   // character). Mode 1 locks alpha at 1.0 because intermediate α produces
   // a rank-deficient mixing matrix that destroys energy in half the FDN's
   // state space - killing self-oscillation. With α=1.0 the matrix is
-  // orthogonal and the drone can sustain.
+  // orthogonal and the drone can sustain
   const float alpha = (matrix_alpha_ < 0.0f)
                           ? parameters_.size
                           : matrix_alpha_;
   matrix_.set_alpha(alpha);
 
-  // Shimmer placeholder: until we build a proper granular pitch shifter, this
-  // just adds extra feedback gain (push into self-resonance) and brightness.
-  // Real implementation is a TODO. At least the parameter is wired up.
+  // shimmer placeholder - just adds fb gain + brightness for now
   if (parameters_.shimmer > 0.0f) {
-    coef_feedback_ += parameters_.shimmer * 0.15f;   // up to +15% feedback
+    coef_feedback_ += parameters_.shimmer * 0.15f;
     coef_tilt_lpf_  = stmlib::Crossfade(
-        coef_tilt_lpf_, 0.995f, parameters_.shimmer);  // opens HF further
+        coef_tilt_lpf_, 0.995f, parameters_.shimmer);
   }
 
-  // Freeze: lock feedback to unity and mute input. SoftLimit catches drift.
   if (parameters_.freeze) {
     coef_feedback_ = 1.0f;
     coef_input_gain_ = 0.0f;
   }
-  // Reverse: TODO - Erbe's Reverse flips the delay-read direction so the
-  // envelope plays back tail-first. With FxEngine's read primitives this
-  // needs a custom Read-from-(write_ptr + length - offset) path; deferring
-  // until basic operation is verified on hardware.
+
+  // ks drone coefficients
+  if (decouple_tilt_) {
+    // pitch log ~30..500Hz. R channel +3¢ for stereo width
+    const float pitch_hz = 30.0f * exp2f(parameters_.pre_delay * 4.06f);
+    const float ks_max = static_cast<float>(kKsSize - 4);
+    const float delay_l = sample_rate_ / pitch_hz;
+    const float delay_r = sample_rate_ / (pitch_hz * 1.0017f);
+    ks_delay_samples_[0] = delay_l > ks_max ? ks_max : delay_l;
+    ks_delay_samples_[1] = delay_r > ks_max ? ks_max : delay_r;
+
+    // tone -> damping lp cutoff. 0.02 ≈ 150Hz, 0.5 ≈ 6kHz
+    ks_damping_coef_ = 0.02f + 0.48f * parameters_.tone;
+
+    // decay walks BOTH string damping AND outer fb gain
+    const float decay = parameters_.decay;
+    ks_internal_damp_ = 0.85f + decay * 0.14f;
+    drone_fb_gain_ = 0.05f + decay * 0.20f;
+    drone_base_noise_ = 0.010f;
+
+    drone_fb_delay_samples_ = sample_rate_ * 0.02f;
+    if (drone_fb_delay_samples_ > kFbDelSize - 1)
+      drone_fb_delay_samples_ = kFbDelSize - 1;
+
+    // 2 drift LFOs (10s, 13s periods) modulate svf cutoff + Q (pitch stable)
+    ks_drift_phase_inc_[0] =
+        2.0f * static_cast<float>(M_PI) * 0.10f / sample_rate_;
+    ks_drift_phase_inc_[1] =
+        2.0f * static_cast<float>(M_PI) * 0.076f / sample_rate_;
+    ks_drift_depth_ = parameters_.motion;
+
+    // filter -> svf cutoff 150Hz..1.9kHz. Q base ≈ 1.4
+    svf_f_base_drone_ = 0.02f + 0.23f * parameters_.filter;
+    svf_q_base_drone_ = 0.7f;
+
+    rvb_mix_ = parameters_.dry_wet;
+    rvb_feedback_ = 0.99f;        // ~14s RT60
+    rvb_damping_ = 0.20f;
+
+    drone_drive_ = 1.0f + parameters_.drive * 2.0f;
+
+    drone_lp_coef_ = 1.0f;
+    drone_hp_coef_ = 0.005f;
+
+    drone_noise_amp_ = parameters_.noise * 0.2f;
+  }
+  // TODO: reverse playback (custom FxEngine read path)
+}
+
+// ks drone - string/channel inside outer fb loop. saturator stays in
+// series so harmonics are musical (not IM fog)
+void Reverb::ProcessKarplusDrone(FloatFrame* in_out, size_t size) {
+  const float fb_gain = drone_fb_gain_;
+  const float fb_delay = drone_fb_delay_samples_;
+  const float drive = drone_drive_;
+  const float lp_k = drone_lp_coef_;
+  const float hp_k = drone_hp_coef_;
+  const float noise_amp = drone_noise_amp_;
+  const float damp_k = ks_damping_coef_;
+
+  while (size--) {
+    float ext_l = in_out->l;
+    float ext_r = in_out->r;
+    float out[2];
+
+    for (int ch = 0; ch < 2; ++ch) {
+      const float ext = ch == 0 ? ext_l : ext_r;
+
+      // outer fb delay (linear interp)
+      const float fbd = fb_delay;
+      const int fbd_i = static_cast<int>(fbd);
+      const float fbd_f = fbd - static_cast<float>(fbd_i);
+      const int fb_rd0 =
+          (fb_write_[ch] - fbd_i - 1 + kFbDelSize * 2) % kFbDelSize;
+      const int fb_rd1 = (fb_rd0 - 1 + kFbDelSize) % kFbDelSize;
+      const float fb_read =
+          fb_buffer_[ch][fb_rd0] + (fb_buffer_[ch][fb_rd1] -
+                                    fb_buffer_[ch][fb_rd0]) * fbd_f;
+
+      // ks excitation: fb + noise + ext
+      const float noise =
+          WhiteNoise() * (noise_amp + drone_base_noise_ + 0.0001f);
+      const float ks_in = fb_read + noise + ext * 0.25f;
+
+      // drift lfo for svf modulation (not pitch)
+      ks_drift_phase_[ch] += ks_drift_phase_inc_[ch];
+      if (ks_drift_phase_[ch] > 2.0f * static_cast<float>(M_PI)) {
+        ks_drift_phase_[ch] -= 2.0f * static_cast<float>(M_PI);
+      }
+      const float drift_sin = sinf(ks_drift_phase_[ch]);
+      // quadrature cos - cutoff/Q mods 90° out of phase
+      const float drift_cos =
+          sinf(ks_drift_phase_[ch] + 1.5707963f);
+
+      // ks string: read -> +in -> dc block -> damping lp -> write back
+      float kd = ks_delay_samples_[ch];
+      if (kd < 4.0f) kd = 4.0f;
+      if (kd > kKsSize - 4) kd = kKsSize - 4;
+      const int kd_i = static_cast<int>(kd);
+      const float kd_f = kd - static_cast<float>(kd_i);
+      const int ks_rd0 = (ks_write_[ch] - kd_i - 1 + kKsSize * 2) % kKsSize;
+      const int ks_rd1 = (ks_rd0 - 1 + kKsSize) % kKsSize;
+      const float ks_read =
+          ks_buffer_[ch][ks_rd0] + (ks_buffer_[ch][ks_rd1] -
+                                    ks_buffer_[ch][ks_rd0]) * kd_f;
+
+      float s = ks_read + ks_in;
+      if (s > 8.0f) s = 8.0f;
+      if (s < -8.0f) s = -8.0f;
+
+      const float dc_out = s - ks_dc_x1_[ch] + 0.995f * ks_dc_y1_[ch];
+      ks_dc_x1_[ch] = s;
+      ks_dc_y1_[ch] = dc_out;
+      s = dc_out * ks_internal_damp_;
+
+      // write FULL-SPECTRUM back to the delay - brightness lp is downstream
+      ks_buffer_[ch][ks_write_[ch]] = s;
+      ks_write_[ch] = (ks_write_[ch] + 1) % kKsSize;
+
+      // outer loop: drift-modulated svf -> hp dc-blocker -> smoothsat
+      float outer = s * drive;
+
+      // drift mods cutoff (sin) and Q (cos, ±1 octave / Q 1..3.3)
+      float svf_f = svf_f_base_drone_ + drift_sin * ks_drift_depth_ * 0.10f;
+      if (svf_f < 0.01f) svf_f = 0.01f;
+      if (svf_f > 0.30f) svf_f = 0.30f;
+      float svf_q = svf_q_base_drone_ - drift_cos * ks_drift_depth_ * 0.4f;
+      if (svf_q < 0.3f) svf_q = 0.3f;
+      if (svf_q > 1.4f) svf_q = 1.4f;
+
+      // chamberlin svf
+      const float hp = outer - svf_lp_drone_[ch] - svf_q * svf_bp_drone_[ch];
+      svf_bp_drone_[ch] += svf_f * hp;
+      svf_lp_drone_[ch] += svf_f * svf_bp_drone_[ch];
+      outer = svf_lp_drone_[ch];
+
+      // hp dc-blocker
+      in_loop_hp_state_[ch] += hp_k * (outer - in_loop_hp_state_[ch]);
+      outer = outer - in_loop_hp_state_[ch];
+      (void)lp_k; (void)drive;
+
+      // smoothsat bounds loop energy - svf can peak above 1 at high Q
+      outer = SmoothSat(outer);
+
+      out[ch] = outer;
+    }
+
+    // schroeder reverb (mono in, stereo via separate AP chains)
+    const float rvb_in = (out[0] + out[1]) * 0.20f;
+
+    // 4 parallel combs, lp-damped feedback
+
+    const float ca = rvb_comb_a_[rvb_comb_w_[0]];
+    const float cb = rvb_comb_b_[rvb_comb_w_[1]];
+    const float cc = rvb_comb_c_[rvb_comb_w_[2]];
+    const float cd = rvb_comb_d_[rvb_comb_w_[3]];
+
+    rvb_comb_lp_[0] += rvb_damping_ * (ca - rvb_comb_lp_[0]);
+    rvb_comb_lp_[1] += rvb_damping_ * (cb - rvb_comb_lp_[1]);
+    rvb_comb_lp_[2] += rvb_damping_ * (cc - rvb_comb_lp_[2]);
+    rvb_comb_lp_[3] += rvb_damping_ * (cd - rvb_comb_lp_[3]);
+
+    rvb_comb_a_[rvb_comb_w_[0]] = rvb_in + rvb_comb_lp_[0] * rvb_feedback_;
+    rvb_comb_b_[rvb_comb_w_[1]] = rvb_in + rvb_comb_lp_[1] * rvb_feedback_;
+    rvb_comb_c_[rvb_comb_w_[2]] = rvb_in + rvb_comb_lp_[2] * rvb_feedback_;
+    rvb_comb_d_[rvb_comb_w_[3]] = rvb_in + rvb_comb_lp_[3] * rvb_feedback_;
+
+    rvb_comb_w_[0] = (rvb_comb_w_[0] + 1) % kRvbCombA;
+    rvb_comb_w_[1] = (rvb_comb_w_[1] + 1) % kRvbCombB;
+    rvb_comb_w_[2] = (rvb_comb_w_[2] + 1) % kRvbCombC;
+    rvb_comb_w_[3] = (rvb_comb_w_[3] + 1) % kRvbCombD;
+
+    const float comb_sum = (ca + cb + cc + cd) * 0.25f;
+
+    // diffusion 2-AP / channel
+    const float kApGain = 0.5f;
+    float sL = comb_sum;
+    {
+      const float buf = rvb_ap_la_[rvb_ap_w_[0]];
+      const float v = buf - kApGain * sL;
+      const float y = kApGain * v + sL;
+      rvb_ap_la_[rvb_ap_w_[0]] = y;
+      rvb_ap_w_[0] = (rvb_ap_w_[0] + 1) % kRvbApLa;
+      sL = v;
+    }
+    {
+      const float buf = rvb_ap_lb_[rvb_ap_w_[1]];
+      const float v = buf - kApGain * sL;
+      const float y = kApGain * v + sL;
+      rvb_ap_lb_[rvb_ap_w_[1]] = y;
+      rvb_ap_w_[1] = (rvb_ap_w_[1] + 1) % kRvbApLb;
+      sL = v;
+    }
+    float sR = comb_sum;
+    {
+      const float buf = rvb_ap_ra_[rvb_ap_w_[2]];
+      const float v = buf - kApGain * sR;
+      const float y = kApGain * v + sR;
+      rvb_ap_ra_[rvb_ap_w_[2]] = y;
+      rvb_ap_w_[2] = (rvb_ap_w_[2] + 1) % kRvbApRa;
+      sR = v;
+    }
+    {
+      const float buf = rvb_ap_rb_[rvb_ap_w_[3]];
+      const float v = buf - kApGain * sR;
+      const float y = kApGain * v + sR;
+      rvb_ap_rb_[rvb_ap_w_[3]] = y;
+      rvb_ap_w_[3] = (rvb_ap_w_[3] + 1) % kRvbApRb;
+      sR = v;
+    }
+
+    // outer fb delay write - dry + small reverb send (long-tail integration)
+    const float mix = rvb_mix_;
+    fb_buffer_[0][fb_write_[0]] = (out[0] + sL * mix * 0.05f) * fb_gain;
+    fb_write_[0] = (fb_write_[0] + 1) % kFbDelSize;
+    fb_buffer_[1][fb_write_[1]] = (out[1] + sR * mix * 0.05f) * fb_gain;
+    fb_write_[1] = (fb_write_[1] + 1) % kFbDelSize;
+
+    // scale combs (fb=0.99 -> DC × ~100, resonances higher) so dry mix is sane
+    sL *= 0.20f;
+    sR *= 0.20f;
+
+    // brightness lp out-of-loop, audible only
+    ks_damping_state_[0] += damp_k * (out[0] - ks_damping_state_[0]);
+    ks_damping_state_[1] += damp_k * (out[1] - ks_damping_state_[1]);
+    const float bright_l = ks_damping_state_[0];
+    const float bright_r = ks_damping_state_[1];
+
+    // mix×4 so wet dominates at high mix
+    const float out_l = (bright_l + sL * mix * 4.0f) * 0.4f;
+    const float out_r = (bright_r + sR * mix * 4.0f) * 0.4f;
+
+
+    const float ml = out_l < 0 ? -out_l : out_l;
+    const float mr = out_r < 0 ? -out_r : out_r;
+    const float m  = ml > mr ? ml : mr;
+    if (m > peak_block_) peak_block_ = m;
+
+    in_out->l = out_l;
+    in_out->r = out_r;
+    ++in_out;
+  }
+
+  peak_ = peak_block_ > peak_ ? peak_block_ : peak_ * 0.9f;
+  peak_block_ = 0.0f;
 }
 
 void Reverb::Process(FloatFrame* in_out, size_t size) {
-  // Memory reservations for the FxEngine buffer. Sum must be < 32768.
-  //
-  //   pre_delay   : 4800    (100 ms @ 48 kHz)
-  //   ap0..ap3    : 256 ×4 = 1024
-  //   del0..del3  : 6200 ×4 = 24800 (sized for base × ~1.4× Size sweep)
-  //   total       : 30624  ✓ (under 32768, with headroom)
-  typedef Engine::Reserve<4800,                    // pre_delay
-          Engine::Reserve<256,                     // ap0
-          Engine::Reserve<256,                     // ap1
-          Engine::Reserve<256,                     // ap2
-          Engine::Reserve<256,                     // ap3
-          Engine::Reserve<6200,                    // del0
-          Engine::Reserve<6200,                    // del1
-          Engine::Reserve<6200,                    // del2
+  if (decouple_tilt_) {
+    ProcessKarplusDrone(in_out, size);
+    return;
+  }
+
+  // FxEngine reservations: pre_delay 4800 + 4×ap 1024 + 4×del 24800 = 30624
+  typedef Engine::Reserve<4800,
+          Engine::Reserve<256,
+          Engine::Reserve<256,
+          Engine::Reserve<256,
+          Engine::Reserve<256,
+          Engine::Reserve<6200,
+          Engine::Reserve<6200,
+          Engine::Reserve<6200,
           Engine::Reserve<6200> > > > > > > > > Memory;
   Engine::DelayLine<Memory, 0> pre_delay;
   Engine::DelayLine<Memory, 1> ap0;
@@ -227,16 +474,14 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
   Engine::DelayLine<Memory, 8> del3;
   Engine::Context c;
 
-  // Snapshot coefficients for the inner loop.
   const float gain      = coef_input_gain_;
   const float pre       = coef_pre_delay_samples_;
   const float kap       = coef_diffusion_;
   const float kfb       = coef_feedback_;
-  const float klp_base  = coef_tilt_lpf_;       // wobbled per-sample if drone
+  const float klp_base  = coef_tilt_lpf_;
   const float wet       = coef_dry_wet_;
   const float ampl      = coef_mod_amplitude_;
-  // Size sweep tighter than before (0.4..1.4x) so even at max we stay within
-  // the per-delay reservation of 6200 samples (longest base 4421 × 1.4 ≈ 6190).
+  // size 0.4..1.4× - longest base 4421 × 1.4 = 6190 fits in 6200 reservation
   const float size_k = 0.4f + 1.0f * parameters_.size;
 
   const float tau0 = kBaseDelay0 * size_k;
@@ -259,12 +504,7 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
     float wet_in;
     c.Write(wet_in, 0.0f);
 
-    // ---- Voice bank injection ----
-    // 4 sines at the same base pitch, each independently pitch-modulated
-    // by its own slow drift LFO. parameters_.motion scales the drift range
-    // up to ±~50 cents (factor 0.03). At motion=0, all four are perfectly
-    // unison (= effectively a single louder voice). At motion=1, the four
-    // wander apart and create chorus / beating / Hecker-style smear.
+    // 4-voice unison injection. motion scales drift ±~50¢ (factor 0.03)
     if (osc_amplitude_ > 0.0f) {
       const float drift_range = parameters_.motion * 0.03f;
       float voice_sum = 0.0f;
@@ -280,23 +520,17 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
         }
         voice_sum += sinf(osc_phase_[i]);
       }
-      // 4 voices summed, normalize amplitude (×0.25). Inject scaled by mode
-      // osc_amplitude - same overall level as a single voice would be.
       wet_in += voice_sum * (osc_amplitude_ * 0.25f);
     }
 
-    // ---- Noise injection (Strega-style) ----
-    // Filtered to brown-ish spectrum. noise_max_ is the mode's ceiling;
-    // user's noise parameter scales within that range.
+    // strega-style brown-ish noise inject
     if (noise_max_ > 0.0f && parameters_.noise > 0.0f) {
       const float white = WhiteNoise();
       noise_lp_state_ += 0.06f * (white - noise_lp_state_);
       wet_in += noise_lp_state_ * parameters_.noise * noise_max_;
     }
 
-    // ---- Motion LFO advance ----
-    // One LFO drives both the mode-0 tilt LPF wobble and the drone-mode
-    // SVF cutoff wobble. Computed once per sample.
+    // motion lfo - drives both mode 0 tilt lpf and drone svf cutoff
     float lfo_value = 0.0f;
     if (motion_lfo_depth_ > 0.0f) {
       motion_lfo_phase_ += motion_lfo_phase_inc_;
@@ -306,75 +540,53 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
       lfo_value = sinf(motion_lfo_phase_);
     }
 
-    // Mode-0 tilt-LPF coefficient (used by c.Lp branches when not in drone).
+    // mode-0 tilt lpf coef
     float klp_sample = klp_base + lfo_value * motion_lfo_depth_ * 0.25f;
     if (klp_sample < 0.05f) klp_sample = 0.05f;
     if (klp_sample > 0.99f) klp_sample = 0.99f;
 
-    // Drone-mode SVF coefficients. Tight modulation around a dark base so the
-    // recirculating signal never gets bright enough to seed self-squeal.
-    // Range ~0.02..0.10 -> ~150..760 Hz.
-    float svf_f = svf_f_base_ + lfo_value * motion_lfo_depth_ * 0.04f;
+    // drone svf cutoff: f ~0.06..0.20 (~460..1530Hz)
+    float svf_f = svf_f_base_ + lfo_value * motion_lfo_depth_ * 0.07f;
     if (svf_f < 0.02f) svf_f = 0.02f;
-    if (svf_f > 0.15f) svf_f = 0.15f;
+    if (svf_f > 0.25f) svf_f = 0.25f;
 
-    // ---- Per-branch processing ----
-    // Branch i = pre + saturate(prior loop feedback)
-    //         -> Schroeder allpass (diffuser, gain = kap)
-    //         -> modulated delay read at tau_i ± depth · sin(lfo)
-    //         -> one-pole LPF
-    //
-    // Feedback into each branch comes from the *previous block's* mixed
-    // output, stored at the delay's tail. The FxEngine's circular buffer
-    // gives us this for free: writing at the head and reading at base+length
-    // walks the entire RT60.
+    // per-branch: ap diffuser -> modulated delay -> one-pole lpf.
+    // drone mode skips per-branch lpf (svf runs post-matrix instead)
     float b0, b1, b2, b3;
 
-    // Branch 0. Per-branch one-pole LPF tames the output AND the feedback
-    // loop. In drone mode the SVF runs additionally on the recirculating
-    // signal (post-matrix) for the Filter morph; the per-branch LPF guards
-    // against high-frequency squeal in the long-feedback regime.
     c.Load(wet_in);
     c.Read(ap0 TAIL, -kap);
     c.WriteAllPass(ap0, kap);
     c.Interpolate(del0, tau0, LFO_1, ampl * tau0, 1.0f);
-    c.Lp(lp0, klp_sample);
+    if (!decouple_tilt_) c.Lp(lp0, klp_sample);
     c.Write(b0, 0.0f);
 
-    // Branch 1
     c.Load(wet_in);
     c.Read(ap1 TAIL, kap);
     c.WriteAllPass(ap1, -kap);
     c.Interpolate(del1, tau1, LFO_2, ampl * tau1, 1.0f);
-    c.Lp(lp1, klp_sample);
+    if (!decouple_tilt_) c.Lp(lp1, klp_sample);
     c.Write(b1, 0.0f);
 
-    // Branch 2
     c.Load(wet_in);
     c.Read(ap2 TAIL, -kap);
     c.WriteAllPass(ap2, kap);
     c.Interpolate(del2, tau2, LFO_1, -ampl * tau2, 1.0f);
-    c.Lp(lp2, klp_sample);
+    if (!decouple_tilt_) c.Lp(lp2, klp_sample);
     c.Write(b2, 0.0f);
 
-    // Branch 3
     c.Load(wet_in);
     c.Read(ap3 TAIL, kap);
     c.WriteAllPass(ap3, -kap);
     c.Interpolate(del3, tau3, LFO_2, -ampl * tau3, 1.0f);
-    c.Lp(lp3, klp_sample);
+    if (!decouple_tilt_) c.Lp(lp3, klp_sample);
     c.Write(b3, 0.0f);
 
-    // ---- Mixing matrix M(α) ----
     float branch_in[4]  = { b0, b1, b2, b3 };
     float mixed[4];
     matrix_.Apply(branch_in, mixed);
 
-    // ---- Drone-mode SVF on the recirculating signal ----
-    // Filter sits BETWEEN matrix and feedback writes - affects only what
-    // recirculates through the FDN. The direct output tap (b_i above)
-    // stays unfiltered, so Filter morph shapes the long-term character of
-    // the tail rather than directly colouring the audible mix.
+    // drone: svf on recirculation only - output tap stays unfiltered
     if (decouple_tilt_) {
       for (int i = 0; i < 4; ++i) {
         const float hp = mixed[i] - svf_lp_[i] - svf_q_ * svf_bp_[i];
@@ -385,15 +597,9 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
       }
     }
 
-    // ---- Feedback writes (with saturation) ----
-    // matrix_comp_ comes from the active mode (see DspOverrides). 0.7
-    // ≈ 1/sqrt(2) for clean reverb (saturator on transients only). 1.0 for
-    // drone mode (no compensation -> continuous saturation, self-osc).
+    // fb writes - matrix_comp: 0.7 ≈ 1/√2 (transient sat), 1.0 = continuous
     const float kMatrixComp = matrix_comp_;
     const float drive = drive_factor_;
-    // SmoothSat is bounded ±1, so drive controls harmonic content rather
-    // than loudness. Higher drive pushes deeper into the nonlinear region
-    // and adds saturation overtones to the feedback signal.
     c.Load(SmoothSat(mixed[0] * kfb * kMatrixComp * drive));
     c.Write(del0, 0.0f);
     c.Load(SmoothSat(mixed[1] * kfb * kMatrixComp * drive));
@@ -403,12 +609,9 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
     c.Load(SmoothSat(mixed[3] * kfb * kMatrixComp * drive));
     c.Write(del3, 0.0f);
 
-    // ---- Stereo output tap ----
-    // Branches 0+2 -> L, 1+3 -> R. Crossfade against the dry input.
+    // stereo tap: 0+2 -> L, 1+3 -> R
     const float wet_l = b0 + b2;
     const float wet_r = b1 + b3;
-    // Peak-track the wet signal pre-crossfade. Anything > 1 will saturate
-    // at the final codec output's SoftLimit -> clip indicator.
     const float magl = wet_l < 0 ? -wet_l : wet_l;
     const float magr = wet_r < 0 ? -wet_r : wet_r;
     const float magm = magl > magr ? magl : magr;
@@ -424,8 +627,7 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
   lpf_state_[2] = lp2;
   lpf_state_[3] = lp3;
 
-  // Decay the per-block peak into the persistent peak. ~5 ms attack via
-  // peak_block_ rising directly; ~150 ms release via 0.9× per block.
+  // peak: instant attack, ~150ms release
   peak_ = peak_block_ > peak_ ? peak_block_ : peak_ * 0.9f;
   peak_block_ = 0.0f;
 }

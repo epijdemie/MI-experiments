@@ -2,7 +2,7 @@
 // Copied from clouds/dsp/fx/fx_engine.h (Émilie Gillet, MIT) and moved
 // under the warps_drone namespace so we own all our DSP without
 // cross-namespace bleed. The implementation is unchanged - see the
-// original for the topology rationale.
+// original for the topology rationale
 
 #ifndef WARPS_DRONE_DSP_FX_ENGINE_H_
 #define WARPS_DRONE_DSP_FX_ENGINE_H_

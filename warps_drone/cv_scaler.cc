@@ -17,65 +17,29 @@ inline float ClampUnit(float v) {
   return v;
 }
 
-// Initial committed values for a pot across all 8 slots. Index order:
-//   [page0_unshifted, page0_shifted, page1_u, page1_s, page2_u, page2_s,
-//    page3_u, page3_s]
-// These should match Drone::Init() defaults - first reading shouldn't
-// snap any parameter.
+// slot defaults - must match Drone::Init() so first read doesn't snap.
+// slot = page*2 + shift:
+//   0 PERF u | 1 PERF s | 2 KARPLUS u | 3 KARPLUS s
+//   4 REVERB u | 5 REVERB s | 6 OVERDRIVE u | 7 OVERDRIVE s
 
-// Default committed values for every (page, shift) slot.
-// Indices: 0=PAGE_PERFORMANCE u, 1=p0 s, 2=PAGE_KARPLUS u, 3=p1 s,
-//          4=PAGE_REVERB u,     5=p2 s, 6=PAGE_SHIMMER u, 7=p3 s.
-
-// Captured live from the module - these were the values dialled in at
-// the time of the readout (sus4 / +3rd stack, pulsing soft plucks at
-// ~2.5 Hz, long reverb with heavy smear). They sit close to each
-// physical pot position so the first-engagement jump is small.
-
-// ALGO   :  chord stack      | chord mode      |
-//           damping          | modal mix       |
-//           reverb size      | predelay (NYI)  |
-//           reserved         | modal count
-// KARPLUS shifted ALGO (idx 3) is the modal-bank mix; default 0.40
-// reproduces the previous locked value so first boot sounds identical
-// to before the knob was exposed.
+// algo:  chord | mode | damping | modal mix | rev size | predelay | _ | _
 constexpr float kAlgoDefaults[8]   = {
-    0.49f, 0.91f, 0.99f, 0.40f, 0.87f, 0.00f, 0.40f, 0.50f
+    0.30f, 0.25f, 0.99f, 0.40f, 0.87f, 0.00f, 0.40f, 0.50f
 };
 
-// PARAM  :  pulse freq       | reserved        |
-//           white/pink mix   | reserved        |
-//           diffusion        | smear           |
-//           modal bright     | pickup
-// PERFORMANCE PARAM unshifted is the K-S exciter pulse-osc frequency
-// (log 50 Hz..250 Hz). KARPLUS PARAM unshifted is noise spectrum mix
-// (0 = pink, 1 = white). REVERB diffusion (idx 4) and smear (idx 5)
-// default to 0 so the reverb starts clean while dialling in sources.
+// param: pulse freq | _ | white/pink | _ | diffusion | smear | warmth | pickup
 constexpr float kParamDefaults[8]  = {
-    0.50f, 1.00f, 0.50f, 0.00f, 0.00f, 0.00f, 0.60f, 0.50f
+    0.50f, 1.00f, 0.50f, 0.50f, 0.00f, 0.00f, 1.00f, 0.50f
 };
 
-// LVL1   :  pitch octave     | pitch (semitones)|
-//           ks LPF cutoff    | reserved        |
-//           reverb lp        | reverb drive    |
-//           modal stiffness  | shimmer depth
-// ks LPF default 0.85 -> ~8 kHz, bright but with the worst hiss tamed.
-// REVERB-page reverb_drive (idx 5) defaulted to 0 so reverb input gain
-// sits at its minimum (0.30) - clean baseline for dial-in.
+// lvl1:  octave | pitch (st) | ks lpf | _ | rev lp | rev drive | tone | _
 constexpr float kLvl1Defaults[8]   = {
-    0.60f, 0.66f, 0.85f, 0.00f, 0.40f, 0.00f, 0.20f, 0.50f
+    0.60f, 0.50f, 0.85f, 0.50f, 0.40f, 0.00f, 1.00f, 0.00f
 };
 
-// LVL2   :  LPF cutoff       | HPF cutoff      |
-//           noise floor base | reserved        |
-//           reverb amount    | reserved        |
-//           dynamics         | shimmer rate
-// PERFORMANCE LVL2 hosts both filters (unshifted = LPF, shifted = HPF,
-// inverted). KARPLUS noise floor default 0.20 - some baseline noise
-// fuel so the K-S has something to chew on out of the box. Reverb wet
-// lives on REVERB-page LVL2 unshifted now - no more PERF/REVERB dup.
+// lvl2:  lpf | Q | noise floor | modal stiff | rev amt | shim rate | bias | vinyl
 constexpr float kLvl2Defaults[8]   = {
-    0.73f, 1.00f, 0.20f, 0.00f, 0.44f, 0.50f, 0.00f, 0.50f
+    0.73f, 0.00f, 0.20f, 0.20f, 0.44f, 0.50f, 0.00f, 0.00f
 };
 
 }  // namespace
@@ -85,16 +49,13 @@ void CvScaler::Init(const Settings* settings) {
   adc_.Init();
   std::fill(&lp_state_[0], &lp_state_[ADC_LAST], 0.0f);
 
-  // CV inputs idle at ~0.5 ADC (mid-rail bias). Initialise the LPF
-  // state there so the first dozen blocks don't see a giant fake
-  // CV offset while the LPF catches up to the real reading.
+  // cv idles at ~0.5 adc - seed lpf so first blocks don't see a fake spike
   lp_state_[ADC_ALGORITHM_CV] = 0.5f;
   lp_state_[ADC_PARAMETER_CV] = 0.5f;
   lp_state_[ADC_LEVEL_1_CV]   = 0.5f;
   lp_state_[ADC_LEVEL_2_CV]   = 0.5f;
 
-  // Start each pot's slots at the hardcoded defaults; the journal
-  // replay below will overwrite any slots that have been saved.
+  // start at hardcoded defaults; journal replay below overrides saved slots
   float defaults[4][8];
   for (int s = 0; s < 8; ++s) {
     defaults[0][s] = kAlgoDefaults[s];
@@ -103,11 +64,8 @@ void CvScaler::Init(const Settings* settings) {
     defaults[3][s] = kLvl2Defaults[s];
   }
 
-  // Scan the journal sector top-to-bottom. The 4 PERFORMANCE-page
-  // unshifted slots (slot index 0 for each pot - chord / cutoff /
-  // pitch / reverb wet) are intentionally skipped during replay
-  // because they're not persisted at all. Those follow the live
-  // physical pot position, set further down.
+  // replay journal. PERF unshifted (slot 0) is not persisted - follows
+  // the live pot position, captured below
   struct FlashRecord {
     uint16_t magic;
     uint16_t slot_id;
@@ -125,15 +83,14 @@ void CvScaler::Init(const Settings* settings) {
            rec->slot_id  <  kNumSlots) {
       const int pot  = rec->slot_id / 8;
       const int slot = rec->slot_id % 8;
-      if (slot != 0) {                       // skip performance slots
+      if (slot != 0) {
         defaults[pot][slot] = rec->value;
       }
       ++rec;
     }
     flash_cursor_ = reinterpret_cast<uint32_t>(rec);
   } else {
-    // Corrupted or a previous firmware's data - erase to recover.
-    // Codec hasn't started yet, so the 1.1 s erase is silent.
+    // corrupted / old firmware data - erase. silent (codec not started)
     FLASH_Unlock();
     FLASH_ClearFlag(FLASH_FLAG_EOP | FLASH_FLAG_OPERR | FLASH_FLAG_WRPERR |
                     FLASH_FLAG_PGAERR | FLASH_FLAG_PGPERR | FLASH_FLAG_PGSERR);
@@ -141,11 +98,8 @@ void CvScaler::Init(const Settings* settings) {
     flash_cursor_ = kSectorBase;
   }
 
-  // Read the live physical pot positions for the 4 PERFORMANCE-page
-  // unshifted slots. Trigger an ADC conversion and busy-wait for the
-  // 8-channel scan to complete (~400 µs at ADC clock; we wait a bit
-  // longer to be safe). This runs before the codec is started, so
-  // there's no audio in flight to worry about.
+  // capture live pot positions for PERF unshifted slots. adc scan ~400µs;
+  // safe margin. codec not started yet
   adc_.Convert();
   for (volatile uint32_t i = 0; i < 100000; ++i) { __NOP(); }
   defaults[0][0] = adc_.float_value(ADC_ALGORITHM_POT);
@@ -153,8 +107,7 @@ void CvScaler::Init(const Settings* settings) {
   defaults[2][0] = adc_.float_value(ADC_LEVEL_1_POT);
   defaults[3][0] = adc_.float_value(ADC_LEVEL_2_POT);
 
-  // Seed the LPF with the live pot reading too, so the first audio
-  // block doesn't see a transient as the LPF settles.
+  // seed lpf with live pot reading - no first-block transient
   lp_state_[ADC_ALGORITHM_POT] = defaults[0][0];
   lp_state_[ADC_PARAMETER_POT] = defaults[1][0];
   lp_state_[ADC_LEVEL_1_POT]   = defaults[2][0];
@@ -197,22 +150,18 @@ void CvScaler::Read(DroneParameters* p, ControlPage page, bool shifted) {
 
   const int slot = Slot(page, shifted);
 
-  // Snapshot committed values before Process() so we can detect any
-  // movement that actually moved a slot (not just CV/ADC jitter).
+  // snapshot for movement detection
   const float prev_algo = algorithm_.committed(slot);
   const float prev_prm  = timbre_   .committed(slot);
   const float prev_l1   = level1_   .committed(slot);
   const float prev_l2   = level2_   .committed(slot);
 
-  // Tick all four pots for the active slot.
   algorithm_.Process(lp_state_[ADC_ALGORITHM_POT], slot);
   timbre_   .Process(lp_state_[ADC_PARAMETER_POT], slot);
   level1_   .Process(lp_state_[ADC_LEVEL_1_POT],   slot);
   level2_   .Process(lp_state_[ADC_LEVEL_2_POT],   slot);
 
-  // Per-slot dirty tracking. The 4 PERFORMANCE-page unshifted slots
-  // (slot == 0) are *not* persisted - they follow the live pot and
-  // would otherwise junk-fill the flash sector during normal play.
+  // PERF unshifted (slot 0) not persisted - would junk-fill the journal
   if (slot != 0) {
     const float now_algo = algorithm_.committed(slot);
     const float now_prm  = timbre_   .committed(slot);
@@ -241,88 +190,48 @@ void CvScaler::Read(DroneParameters* p, ControlPage page, bool shifted) {
     }
   }
 
-  // Tick the idle counter of every still-dirty slot.
   for (int i = 0; i < kNumSlots; ++i) {
     if (slot_dirty_[i] && slot_idle_blocks_[i] < kKnobSettleBlocks) {
       ++slot_idle_blocks_[i];
     }
   }
-  // Block tick paces the save state machine.
   ++block_tick_;
 
-  // CVs are bipolar around 0.5 idle; positive voltage decreases reading.
+  // cv bipolar around 0.5; +V drops the reading
   const float algo_cv   = 0.5f - lp_state_[ADC_ALGORITHM_CV];
   const float timbre_cv = 0.5f - lp_state_[ADC_PARAMETER_CV];
   const float l2_cv     = 0.5f - lp_state_[ADC_LEVEL_2_CV];
-  // LVL1 CV is V/oct - keep it raw (Drone does the semitone math).
+  // lvl1 cv = v/oct, raw (Drone does the semitone math)
   const float l1_cv_raw = lp_state_[ADC_LEVEL_1_CV];
 
-  // ----------------------------------------------------------------
-  // Page 0 unshifted slots, plus CV summed in for the four CV-able ones.
-  // ----------------------------------------------------------------
+  // PERF unshifted, +cv
   p->chord         = ClampUnit(algorithm_.committed(Slot(PAGE_PERFORMANCE, false)) + algo_cv);
-  // PARAM unshifted on PERFORMANCE = K-S exciter pulse-osc frequency.
-  // The pulse-osc replaces the internal noise burst as the primary
-  // K-S excitation; its harmonic content gets filtered into pitch by
-  // each string in the chord bank (same trick as Strega-via-IN-L).
   p->pulse_freq    = ClampUnit(timbre_   .committed(Slot(PAGE_PERFORMANCE, false)) + timbre_cv);
-  // LVL1 unshifted = octave selector; PERF-unshifted slots are journal-
-  // excluded so this always follows the live pot at boot. Fine semitone
-  // pitch lives on the shifted layer and DOES get persisted.
   p->pitch_octave  = ClampUnit(level1_   .committed(Slot(PAGE_PERFORMANCE, false)));
-  // LVL2 unshifted = LPF cutoff (moved here from PARAM unshifted to make
-  // room for the pulse-freq knob). LVL2 CV follows the parameter.
   p->lpf_cutoff    = ClampUnit(level2_   .committed(Slot(PAGE_PERFORMANCE, false)) + l2_cv);
 
-  // Stash the *calibrated* V/oct value (in semitones from C-something)
-  // where Drone expects it. We piggyback on reserved_a (an internal
-  // scratch field that nothing else writes). The settings pointer is
-  // nullable in tests; production always provides it via Init().
+  // calibrated v/oct -> semitones, piggybacked on reserved_a
   p->reserved_a = settings_
       ? settings_->calibration().Transform(l1_cv_raw)
       : (0.5f - l1_cv_raw) * 120.0f;
 
-  // ----------------------------------------------------------------
-  // Page 0 shifted
-  // ----------------------------------------------------------------
+  // PERF shifted
   p->chord_mode       = algorithm_.committed(Slot(PAGE_PERFORMANCE, true));
-  // PARAM shifted: reserved (previously HPF, now on LVL2 shifted).
+  p->pulse_gain       = timbre_   .committed(Slot(PAGE_PERFORMANCE, true));
   p->pitch            = level1_   .committed(Slot(PAGE_PERFORMANCE, true));
-  // LVL2 shifted = HPF cutoff (inverted on knob, CW = open).
-  p->hpf_cutoff       = level2_   .committed(Slot(PAGE_PERFORMANCE, true));
-  // filter_resonance unplugged - left at the Init default (Q = 0.7,
-  // Butterworth-flat). Re-expose on a future slot if it becomes useful.
+  p->filter_resonance = level2_   .committed(Slot(PAGE_PERFORMANCE, true));
 
-  // ----------------------------------------------------------------
-  // Page 1 KARPLUS
-  // ----------------------------------------------------------------
-  // KARPLUS page - plucking machinery removed. The four unshifted slots
-  // are tone-shaping the K-S strings; all shifted slots are reserved.
-  //   BIG    unshifted = damping             |  shifted = reserved
-  //   SMALL  unshifted = white/pink mix      |  shifted = reserved
-  //   LVL1   unshifted = ks LPF cutoff       |  shifted = reserved
-  //   LVL2   unshifted = noise floor base    |  shifted = reserved
+  // KARPLUS unshifted: damping | white/pink | ks lpf | noise floor
+  // shifted ALGO = modal mix; other shifted slots inert (modal params
+  // hardcoded in Drone::Init)
   p->damping          = algorithm_.committed(Slot(PAGE_KARPLUS,     false));
   p->white_pink_mix   = timbre_   .committed(Slot(PAGE_KARPLUS,     false));
   p->karplus_lpf      = level1_   .committed(Slot(PAGE_KARPLUS,     false));
   p->noise_floor_base = level2_   .committed(Slot(PAGE_KARPLUS,     false));
-  // BIG + shift on KARPLUS = modal-bank mix. Lives here so you
-  // can dial the harmonic-forest density (cleaner ↔ washier reverb)
-  // from the same page that shapes the K-S tone.
   p->harmonics        = algorithm_.committed(Slot(PAGE_KARPLUS,     true));
-  // Other shifted-layer slots on KARPLUS are still reserved.
 
-  // ----------------------------------------------------------------
-  // Page 2 REVERB
-  //   BIG   unshifted = reverb_size      |  shifted = reverb_predelay (NYI)
-  //   SMALL unshifted = reverb_diffusion |  shifted = smear
-  //   LVL1  unshifted = reverb_lp        |  shifted = reverb_drive
-  //   LVL2  unshifted = reverb_amount    |  shifted = reverb_res_b (reserved)
-  //
-  // Reverb wet lives ONLY here now (no longer mirrored on PERFORMANCE
-  // LVL2). LVL2 CV no longer routes to wet - the PERFORMANCE LVL2 CV
-  // jack now controls LPF cutoff. Wet is knob-only.
-  // ----------------------------------------------------------------
+  // REVERB:  size | diffusion | lp | amount  (unshifted)
+  //          predelay | smear | drive | shim_rate  (shifted)
   p->reverb_size      = algorithm_.committed(Slot(PAGE_REVERB,      false));
   p->reverb_diffusion = timbre_   .committed(Slot(PAGE_REVERB,      false));
   p->reverb_lp        = level1_   .committed(Slot(PAGE_REVERB,      false));
@@ -330,20 +239,15 @@ void CvScaler::Read(DroneParameters* p, ControlPage page, bool shifted) {
   p->reverb_predelay  = algorithm_.committed(Slot(PAGE_REVERB,      true));
   p->smear            = timbre_   .committed(Slot(PAGE_REVERB,      true));
   p->reverb_drive     = level1_   .committed(Slot(PAGE_REVERB,      true));
-  p->reverb_res_b     = level2_   .committed(Slot(PAGE_REVERB,      true));
+  p->reverb_shim_rate = level2_   .committed(Slot(PAGE_REVERB,      true));
 
-  // ----------------------------------------------------------------
-  // Page 3 SHIMMER & GLIMMER (DSP disabled; values still tracked)
-  // ----------------------------------------------------------------
-  // SHIMMER ALGO unshifted: was harmonics, now moved to KARPLUS shift.
-  // Slot is reserved.
-  p->modal_brightness = timbre_   .committed(Slot(PAGE_SHIMMER,     false));
-  p->modal_stiffness  = level1_   .committed(Slot(PAGE_SHIMMER,     false));
-  p->dynamics         = level2_   .committed(Slot(PAGE_SHIMMER,     false));
-  p->modal_count      = algorithm_.committed(Slot(PAGE_SHIMMER,     true));
-  p->modal_pickup     = timbre_   .committed(Slot(PAGE_SHIMMER,     true));
-  p->reverb_shimmer   = level1_   .committed(Slot(PAGE_SHIMMER,     true));
-  p->reverb_shim_rate = level2_   .committed(Slot(PAGE_SHIMMER,     true));
+  // OVERDRIVE unshifted: drive | warmth | tone | vinyl
+  // shifted: only lvl2 used (bias). BIG/SMALL/LVL1 shifted reserved
+  p->distortion        = algorithm_.committed(Slot(PAGE_OVERDRIVE, false));
+  p->distortion_warmth = timbre_   .committed(Slot(PAGE_OVERDRIVE, false));
+  p->distortion_tone   = level1_   .committed(Slot(PAGE_OVERDRIVE, false));
+  p->vinyl_noise       = level2_   .committed(Slot(PAGE_OVERDRIVE, false));
+  p->distortion_bias   = level2_   .committed(Slot(PAGE_OVERDRIVE, true));
 
   adc_.Convert();
 }
@@ -351,9 +255,7 @@ void CvScaler::Read(DroneParameters* p, ControlPage page, bool shifted) {
 void CvScaler::MaybeSave() {
   switch (save_state_) {
     case SAVE_IDLE: {
-      // Find the first dirty slot whose idle counter has reached the
-      // settle threshold. One slot per pass so each MaybeSave call
-      // returns quickly.
+      // first settled-dirty slot, one per pass
       int found = -1;
       for (int i = 0; i < kNumSlots; ++i) {
         if (slot_dirty_[i] && slot_idle_blocks_[i] >= kKnobSettleBlocks) {
@@ -363,11 +265,7 @@ void CvScaler::MaybeSave() {
       }
       if (found < 0) return;
 
-      // Sector wrap? Erase + re-dirty everything so the post-erase
-      // sector ends up with the current state of all 32 slots.
-      // The 1.1 s erase blocks the flash interface; this is the only
-      // audible event in the save flow. Happens once per ~16 380
-      // records, which is many hours of editing.
+      // sector wrap -> erase + re-dirty all. 1.1s blocking erase
       if (flash_cursor_ + 8 > kSectorEnd) {
         FLASH_Unlock();
         FLASH_ClearFlag(FLASH_FLAG_EOP | FLASH_FLAG_OPERR | FLASH_FLAG_WRPERR |
@@ -378,10 +276,9 @@ void CvScaler::MaybeSave() {
           slot_dirty_[i]       = true;
           slot_idle_blocks_[i] = kKnobSettleBlocks;
         }
-        return;  // pick up the first slot on the next call
+        return;
       }
 
-      // Read the current value for the slot we found.
       const int pot  = found / 8;
       const int slot = found % 8;
       float value = 0.0f;
@@ -429,7 +326,7 @@ void CvScaler::MaybeSave() {
 }
 
 void CvScaler::DetectAudioNormalization(warps::Codec::Frame*, size_t) {
-  // Stub. Audio inputs are used by Drone (excitement + trigger).
+  // stub - audio inputs handled in Drone
 }
 
 }  // namespace warps_drone

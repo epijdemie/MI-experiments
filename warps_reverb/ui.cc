@@ -17,8 +17,6 @@ void Ui::Init(CvScaler* cv_scaler, Reverb* reverb,
   moved_during_press_ = false;
   shifted_ = false;
 
-  // Boot into mode 0. EnterMode pushes the mode's defaults into the live
-  // parameters and updates the reverb's DSP overrides.
   EnterMode(MODE_REVERB);
 }
 
@@ -41,9 +39,7 @@ void Ui::Poll() {
     press_ticks_ = 0;
     moved_during_press_ = false;
     shifted_ = true;
-    // Discard any movement flag accumulated BEFORE this press - knob
-    // fiddling between mode-switch taps used to leak into moved_during_press_
-    // and make taps register as shift gestures (mode change failed).
+    // drop pre-press movement so it can't fake a hold
     cv_scaler_->TakeMovementFlag();
   } else if (pressed && cv_scaler_->TakeMovementFlag()) {
     moved_during_press_ = true;
@@ -59,7 +55,6 @@ void Ui::Poll() {
     const bool was_hold =
         press_ticks_ >= kHoldTicks || moved_during_press_;
     if (!was_hold) {
-      // Short tap -> cycle to next mode.
       const FirmwareMode next =
           static_cast<FirmwareMode>((mode_ + 1) % MODE_COUNT);
       EnterMode(next);
@@ -73,17 +68,15 @@ void Ui::Poll() {
 void Ui::UpdateLeds() {
   const ModeConfig& cfg = ModeFor(mode_);
 
-  // ---- Main RGB LED ----
   uint8_t r = 0, g = 0, b = 0;
   if (shifted_) {
-    r = g = b = 255;                                     // white while shifted
+    r = g = b = 255;
   } else if (cfg.dsp.show_clip_warning &&
              reverb_->peak() > kClipThreshold) {
-    r = 255;                                             // red on clip
+    r = 255;
   }
   leds_.set_main(r, g, b);
 
-  // ---- OSC bicolor LED - current mode ----
   leds_.set_osc(cfg.osc_red, cfg.osc_green);
 
   leds_.Write();

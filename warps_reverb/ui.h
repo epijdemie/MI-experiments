@@ -1,19 +1,7 @@
-// Button-gesture and LED state machine.
-//
-// Gestures (mode-independent):
-//   - Short tap -> cycle to next mode (with wraparound)
-//   - Hold      -> shift layer for knobs
-//
-// LEDs:
-//   - Main RGB (under big knob): solid white while shift held, red flash on
-//     output clipping, off otherwise.
-//   - OSC bicolor (next to button): steady color = current mode.
-//       mode 0: off            mode 2: red
-//       mode 1: green          mode 3: orange (red + green)
-//
-// Pressing the button cancels any "tap pending" decision - only on release
-// after the multi-tap window do we commit. A press that held longer than
-// kHoldTicks or moved knobs is treated as a shift gesture, not a tap.
+// button + led state machine.
+// tap -> next mode (wrap). hold or knob-move -> shift.
+// main rgb: white shifted, red on clip.
+// osc bicolor: mode (0 off, 1 green, 2 red, 3 orange)
 
 #ifndef WARPS_REVERB_UI_H_
 #define WARPS_REVERB_UI_H_
@@ -29,7 +17,7 @@
 
 namespace warps_reverb {
 
-class Reverb;  // forward - defined in dsp/reverb.h
+class Reverb;
 
 class Ui {
  public:
@@ -49,13 +37,8 @@ class Ui {
   void UpdateLeds();
   void EnterMode(FirmwareMode m);
 
-  // Poll runs at ~1.5 kHz (one call per audio block).
-  // ~1 s tolerance - naturally slow taps (200–400 ms is normal) still register
-  // as taps. Only deliberate long presses or knob-moving gestures count as
-  // shift edits. The previous 130 ms threshold was way too aggressive.
+  // poll @ ~1.5kHz. ~1s tap tolerance
   static constexpr uint16_t kHoldTicks      = 1500;
-
-  // Output peak above which we flash the main LED red.
   static constexpr float    kClipThreshold  = 0.95f;
 
   warps::Switches   switches_;

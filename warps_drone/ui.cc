@@ -21,14 +21,8 @@ void Ui::Init(Drone* drone, DroneParameters* parameters,
   page_         = PAGE_PERFORMANCE;
   status_ticks_ = 0;
 
-  // Boot-hold detection - if the button is physically pressed right
-  // after the GPIO peripheral is up, enter calibration. Settle the
-  // debounce shift register first (8 reads of "pressed" fills it to
-  // 0x00 = pressed()=true) so the very first Poll() doesn't see a
-  // bogus release+press from the still-settling debouncer.
-  // wait_for_release_ then suppresses press_edge events until the
-  // user physically lets go of the boot-hold - otherwise the held
-  // button at boot would itself count as the C1 capture press.
+  // boot-hold -> cal. settle debounce first so first Poll() doesn't see
+  // a bogus release+press
   if (switches_.pressed_immediate(0)) {
     for (int i = 0; i < 16; ++i) switches_.Debounce();
     mode_              = UI_MODE_CALIBRATION_C1;
@@ -51,13 +45,13 @@ void Ui::Poll() {
   if (mode_ == UI_MODE_NORMAL) {
     if (press_edge) {
       press_ticks_ = 0;
-      shifted_     = true;   // engage shift immediately for snappy edits
+      shifted_     = true;
     }
     if (pressed && press_ticks_ < UINT16_MAX) ++press_ticks_;
 
     if (release_edge) {
       shifted_ = false;
-      // Short release = tap = page cycle. Long release = end of hold.
+      // short release = tap -> page cycle
       if (press_ticks_ < kTapWindow) {
         page_ = static_cast<ControlPage>((page_ + 1) % PAGE_COUNT);
       }
@@ -66,22 +60,15 @@ void Ui::Poll() {
   } else if (mode_ == UI_MODE_CALIBRATION_C1 ||
              mode_ == UI_MODE_CALIBRATION_C3) {
     if (wait_for_release_) {
-      // Boot-hold suppression: don't accept any captures until the
-      // user has physically released the button at least once.
-      // On release_edge ALSO snapshot the unpatched V/oct bias - the
-      // user is expected to boot with nothing patched to PITCH, so
-      // whatever the smoothed ADC reads at that instant is the "0 V"
-      // anchor used to align the offset.
+      // release of boot-hold also snapshots the unpatched v/oct bias
       if (release_edge) {
         wait_for_release_  = false;
         voct_bias_capture_ = cv_scaler_->voct_raw();
       }
     } else if (press_edge) {
-      // Each press_edge captures the current V/oct ADC, advances state.
       HandleCalibrationButton();
     }
   } else {
-    // OK / ERROR splash: count down then return to normal.
     if (status_ticks_ > 0) {
       --status_ticks_;
     } else {
@@ -99,22 +86,12 @@ void Ui::HandleCalibrationButton() {
     voct_c1_capture_ = voct;
     mode_ = UI_MODE_CALIBRATION_C3;
   } else {
-    voct_c1_capture_ = voct_c1_capture_;  // (kept for clarity)
     const float c3 = voct;
     const float delta = c3 - voct_c1_capture_;
-    // The Warps V/oct ADC reading falls as pitch rises (current default
-    // is semitones = (0.5 - adc) * 120, i.e. scale = -120 sem / unit).
-    // Two octaves between the 1 V and 3 V points should produce roughly
-    // delta ≈ -0.2. Accept anything in [-0.5, -0.05]; outside that the
-    // user almost certainly didn't patch the right voltages.
+    // adc falls as pitch rises; 2 oct between C1/C3 -> delta ≈ -0.2
     if (delta > -0.5f && delta < -0.05f) {
-      // Scale from the two captured voltages; offset from the bias
-      // capture (taken when you released the boot-hold, before
-      // patching anything) so semitones = 0 at the unpatched ADC
-      // reading. Without this anchor the per-module bias point (which
-      // is NOT necessarily 0.5) leaks straight into the pitch.
       CalibrationData* c = settings_->mutable_calibration();
-      c->voct_scale  = 24.0f / delta;             // semitones per ADC unit
+      c->voct_scale  = 24.0f / delta;
       c->voct_offset = -c->voct_scale * voct_bias_capture_;
       settings_->Save();
       mode_ = UI_MODE_CALIBRATION_OK;
@@ -129,57 +106,55 @@ void Ui::UpdateLeds() {
   ++led_tick_;
   if (trigger_flash_ > 0) --trigger_flash_;
 
-  // ----- Main RGB knob LED: chord color (with shift override). -----
+  // main rgb: chord colour (shift override)
   uint8_t r = 0, g = 0, b = 0;
   if (peak_ > kClipThreshold) {
     r = 255;
   } else if (shifted_ && page_ == PAGE_PERFORMANCE) {
-    // Shift on PERFORMANCE -> BIG knob picks chord *mode*. Display
-    // the mode colour so you can see what they're choosing.
-    switch (drone_->chord_mode()) {
-      case MODE_MAJOR:                            g = 255;           break;
-      case MODE_MINOR:                            b = 255;           break;
-      case MODE_DOM7:                             r = 255; g = 160;  break; // amber
-      case MODE_DIM:                              r = 255;           break;
-      case MODE_SUS2:                             g = 255; b = 255;  break; // cyan
-      case MODE_SUS4:                             r = 220; b = 255;  break; // violet
+    // shift on PERF -> BIG = chord bank, show bank colour
+    switch (drone_->bank()) {
+      case BANK_DETUNE:                           r = g = b = 255;   break; // white
+      case BANK_MINOR:                            b = 255;           break; // blue
+      case BANK_MAJOR:                            g = 255;           break; // green
+      case BANK_DOM7:                             r = 255; g = 160;  break; // amber
+      case BANK_DRONE:                            g = 255; b = 255;  break; // cyan
+      case BANK_WEIRD:                            r = 220; b = 255;  break; // violet
       default:                                    r = g = b = 255;   break;
     }
   } else if (shifted_) {
-    r = g = b = 255;     // generic shift indicator on other pages
+    r = g = b = 255;
   } else {
-    // BIG knob unshifted = chord stack. Each stack zone gets its own
-    // hue so the chord identity is visible without holding shift.
-    // Brightness ramps with the chord knob position (140 -> 255) so
-    // detune sub-position inside a zone is still visible as a swell.
+    // unshifted BIG. In chord banks: density zone hue, brightness ramp.
+    // In DETUNE bank: bank colour (white) with brightness ramp
     const float c = parameters_->chord;
     const uint8_t val = 140 + static_cast<uint8_t>(c * 115.0f);
-    switch (drone_->voicing_zone()) {
-      case STACK_UNISON: r = g = b = val;                       break; // white
-      case STACK_DETUNE: g = val;          b = val;             break; // cyan
-      case STACK_3RD:    g = val;                               break; // green
-      case STACK_5TH:    r = val;          g = (val * 7) / 10;  break; // amber
-      case STACK_7TH:    r = val;          g = (val * 4) / 10;  break; // orange
-      case STACK_9TH:    r = val;                               break; // red
-      default:           r = g = b = val;                       break;
+    if (drone_->bank() == BANK_DETUNE) {
+      r = g = b = val;                                                       // white
+    } else {
+      switch (drone_->density_zone()) {
+        case DENSITY_POWER: r = g = b = val;                       break;    // white
+        case DENSITY_TRIAD: g = val;                               break;    // green
+        case DENSITY_7TH:   r = val;          g = (val * 7) / 10;  break;    // amber
+        case DENSITY_9TH:   r = val;          g = (val * 4) / 10;  break;    // orange
+        case DENSITY_EXT:   r = val;                               break;    // red
+        default:            r = g = b = val;                       break;
+      }
     }
   }
   leds_.set_main(r, g, b);
 
-  // ----- OSC bicolor LED -----
-  // Default = page indicator. Calibration takes it over for feedback -
-  // blinks green at C1, yellow at C3, solid green on success, solid red
-  // on validation error.
+  // osc bicolor: page indicator. cal overrides - green blink C1, yellow C3,
+  // solid green ok, solid red err
   uint8_t osc_r = 0, osc_g = 0;
   switch (mode_) {
     case UI_MODE_CALIBRATION_C1: {
-      const bool blink = (led_tick_ & 0x100) != 0;   // ~3 Hz at 1.5 kHz
+      const bool blink = (led_tick_ & 0x100) != 0;
       if (blink) osc_g = 255;
       break;
     }
     case UI_MODE_CALIBRATION_C3: {
       const bool blink = (led_tick_ & 0x100) != 0;
-      if (blink) { osc_r = 255; osc_g = 220; }       // yellow
+      if (blink) { osc_r = 255; osc_g = 220; }
       break;
     }
     case UI_MODE_CALIBRATION_OK:
@@ -188,15 +163,30 @@ void Ui::UpdateLeds() {
     case UI_MODE_CALIBRATION_ERROR:
       osc_r = 255;
       break;
-    default:
+    default: {
+      // breathing for dimmed (bypassed) state - triangle, ~2.7s period,
+      // 5..20%
+      const uint32_t bph    = led_tick_ & 0xFFF;
+      const uint32_t bhalf  = bph < 0x800 ? bph : 0xFFF - bph;
+      const float    breath = static_cast<float>(bhalf) * (1.0f / 2048.0f);
+      const uint8_t  br_r   = 13 + static_cast<uint8_t>(38.0f * breath);
+      const uint8_t  br_g   = 11 + static_cast<uint8_t>(33.0f * breath);
       switch (page_) {
-        case PAGE_PERFORMANCE:                          break;   // off
-        case PAGE_KARPLUS:    osc_g = 255;              break;   // green
-        case PAGE_REVERB:     osc_r = 255; osc_g = 220; break;   // orange
-        case PAGE_SHIMMER:    osc_r = 255;              break;   // red
+        case PAGE_PERFORMANCE:                          break;
+        case PAGE_KARPLUS:    osc_g = 255;              break;
+        case PAGE_REVERB: {
+          const bool active = parameters_->reverb_amount > 0.005f;
+          osc_r = active ? 255 : br_r;
+          osc_g = active ? 220 : br_g;
+          break;
+        }
+        case PAGE_OVERDRIVE:
+          osc_r = parameters_->distortion > 0.005f ? 255 : br_r;
+          break;
         default:                                        break;
       }
       break;
+    }
   }
   leds_.set_osc(osc_r, osc_g);
   leds_.Write();

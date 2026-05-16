@@ -22,7 +22,7 @@
 namespace warps_reverb {
 
 // IDs for every user-facing reverb parameter. PARAM_NONE = unmapped slot,
-// useful when a mode doesn't want to bind one of the pots.
+// useful when a mode doesn't want to bind one of the pots
 enum ParameterId {
   PARAM_NONE = 0,
   PARAM_DECAY,
@@ -49,14 +49,14 @@ enum FirmwareMode {
   MODE_COUNT
 };
 
-// Pot dual-function binding. unshifted layer is also the CV target.
+// Pot dual-function binding. unshifted layer is also the CV target
 struct PotMapping {
   ParameterId unshifted;
   ParameterId shifted;
 };
 
 // DspOverrides moved to dsp/parameters.h so Reverb can consume the struct
-// directly without pulling in modes.h.
+// directly without pulling in modes.h
 
 struct ModeConfig {
   const char* name;
@@ -77,10 +77,10 @@ inline const ModeConfig& ModeFor(FirmwareMode m) {
 }
 
 // Returns a pointer to the named field in *p for the given ParameterId.
-// PARAM_NONE returns a pointer to a process-wide sink (writes are dropped).
+// PARAM_NONE returns a pointer to a process-wide sink (writes are dropped)
 float* WriteSlot(ReverbParameters* p, ParameterId id);
 
-// Read-only counterpart for const access (mode defaults).
+// Read-only counterpart for const access (mode defaults)
 float ReadSlot(const ReverbParameters& p, ParameterId id);
 
 }  // namespace warps_reverb

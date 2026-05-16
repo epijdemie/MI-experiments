@@ -1,17 +1,5 @@
-// UI for the page-based drone firmware.
-//
-// Button gestures:
-//   single tap (short press+release)  -> cycle to next page
-//   hold (press held > kTapWindow)    -> shift layer (per page)
-//   held during boot                  -> enter V/oct calibration
-//   pluck via IN R audio (separate)   -> re-pluck (handled in Drone)
-//
-// LEDs:
-//   OSC bicolor       - page indicator (off / green / orange / red).
-//                       Briefly punches orange on each detected trigger.
-//   Main RGB knob LED - chord color (current voicing zone). Solid
-//                       white while shift held. Red flash on output clip.
-//                       Blinking green/yellow during calibration steps.
+// button: tap -> next page, hold -> shift, boot-hold -> v/oct cal.
+// osc led = page indicator. main rgb = chord / shift / clip / cal status
 
 #ifndef WARPS_DRONE_UI_H_
 #define WARPS_DRONE_UI_H_
@@ -25,16 +13,16 @@
 
 namespace warps_drone {
 
-class Drone;      // forward - dsp/drone.h
-class CvScaler;   // forward - cv_scaler.h
-class Settings;   // forward - settings.h
+class Drone;
+class CvScaler;
+class Settings;
 
 enum UiMode {
   UI_MODE_NORMAL = 0,
-  UI_MODE_CALIBRATION_C1,    // capture +1 V reference
-  UI_MODE_CALIBRATION_C3,    // capture +3 V reference
-  UI_MODE_CALIBRATION_OK,    // brief solid-green success indication
-  UI_MODE_CALIBRATION_ERROR, // brief solid-red error indication
+  UI_MODE_CALIBRATION_C1,    // +1V capture
+  UI_MODE_CALIBRATION_C3,    // +3V capture
+  UI_MODE_CALIBRATION_OK,
+  UI_MODE_CALIBRATION_ERROR,
 };
 
 class Ui {
@@ -53,16 +41,13 @@ class Ui {
 
  private:
   void UpdateLeds();
-  void HandleCalibrationButton();   // process a press_edge while calibrating
-  void FinishCalibration();         // compute scale/offset, validate, save
+  void HandleCalibrationButton();
+  void FinishCalibration();
 
-  // Poll runs ~1.5 kHz (one call per audio block, 32 samples @ 48 kHz).
-  // Tap window ~200 ms - anything shorter and held release reads as a
-  // tap, anything longer reads as a hold (shift gesture).
-  static constexpr uint16_t kTapWindow             = 300;
-  static constexpr uint16_t kFlashTicks            = 220;    // ~150 ms
-  // ~1.5 s post-calibration LED splash before returning to normal.
-  static constexpr uint16_t kCalibrationStatusTicks = 2200;
+  // poll @ ~1.5kHz (1 / audio block, 32 samp @ 48k)
+  static constexpr uint16_t kTapWindow              = 300;   // ~200ms
+  static constexpr uint16_t kFlashTicks             = 220;   // ~150ms
+  static constexpr uint16_t kCalibrationStatusTicks = 2200;  // ~1.5s
   static constexpr float    kClipThreshold = 0.95f;
 
   warps::Switches  switches_;
@@ -84,13 +69,9 @@ class Ui {
   uint16_t     status_ticks_        = 0;
   float        voct_bias_capture_   = 0.0f;
   float        voct_c1_capture_     = 0.0f;
-  // When entering calibration via boot-hold, you is still holding
-  // the button when the first Poll() runs. We have to wait for them to
-  // physically release before treating the next press as a capture
-  // event - otherwise the boot-hold itself counts as the C1 press.
-  // The release_edge that ends the boot-hold also auto-captures the
-  // unpatched V/oct bias used as the "0 V" anchor for the offset, so
-  // you must have NO cable patched to PITCH at this moment.
+  // boot-hold cal: ignore presses until physical release; that release
+  // also captures the unpatched v/oct bias as 0V anchor (PITCH must be
+  // unpatched at boot)
   bool         wait_for_release_    = false;
 
   DISALLOW_COPY_AND_ASSIGN(Ui);

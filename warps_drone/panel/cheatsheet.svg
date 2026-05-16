@@ -147,11 +147,11 @@
       <text x="44"  y="35.5">chord <tspan fill="#7fc8ff">+CV</tspan></text>
       <text x="44"  y="40.0" fill="#7fc8ff">+ mode</text>
       <text x="76"  y="35.5">pulse freq <tspan fill="#7fc8ff">+CV</tspan></text>
-      <text x="76"  y="40.0" fill="#888">+ reserved</text>
+      <text x="76"  y="40.0" fill="#7fc8ff">+ pulse gain</text>
       <text x="108" y="35.5">octave <tspan fill="#7fc8ff">+V/oct</tspan></text>
       <text x="108" y="40.0" fill="#7fc8ff">+ pitch (semi)</text>
       <text x="138" y="35.5">LPF cut <tspan fill="#7fc8ff">+CV</tspan></text>
-      <text x="138" y="40.0" fill="#7fc8ff">+ HPF cut</text>
+      <text x="138" y="40.0" fill="#7fc8ff">+ resonance (Q)</text>
     </g>
     <line x1="3" y1="52" x2="162" y2="52" stroke="#333" stroke-width="0.15"/>
 
@@ -161,13 +161,13 @@
     <text x="11" y="64.0" font-size="1.8" fill="#888">green • KS tone</text>
     <g font-size="2.5" fill="#fff">
       <text x="44"  y="60.5">damping</text>
-      <text x="44"  y="65.0" fill="#888">+ reserved</text>
+      <text x="44"  y="65.0" fill="#fff">+ harmonics (modal)</text>
       <text x="76"  y="60.5">wht/pnk mix</text>
-      <text x="76"  y="65.0" fill="#888">+ reserved</text>
+      <text x="76"  y="65.0" fill="#fff">+ modal count</text>
       <text x="108" y="60.5">ks LPF</text>
-      <text x="108" y="65.0" fill="#888">+ reserved</text>
+      <text x="108" y="65.0" fill="#fff">+ modal pickup</text>
       <text x="138" y="60.5">noise floor</text>
-      <text x="138" y="65.0" fill="#888">+ reserved</text>
+      <text x="138" y="65.0" fill="#fff">+ modal stiffness</text>
     </g>
     <line x1="3" y1="77" x2="162" y2="77" stroke="#333" stroke-width="0.15"/>
 
@@ -177,51 +177,58 @@
     <text x="11" y="89.0" font-size="1.8" fill="#888">orange • space</text>
     <g font-size="2.5" fill="#fff">
       <text x="44"  y="85.5">size</text>
-      <text x="44"  y="90.0" fill="#888">+ predelay (NYI)</text>
+      <text x="44"  y="90.0" fill="#7fc8ff">+ predelay</text>
       <text x="76"  y="85.5">diffusion</text>
       <text x="76"  y="90.0" fill="#7fc8ff">+ smear</text>
       <text x="108" y="85.5">HF damp</text>
       <text x="108" y="90.0" fill="#7fc8ff">+ drive</text>
       <text x="138" y="85.5">rev wet</text>
-      <text x="138" y="90.0" fill="#888">+ reserved</text>
+      <text x="138" y="90.0" fill="#fff">+ chorus rate</text>
     </g>
     <line x1="3" y1="102" x2="162" y2="102" stroke="#333" stroke-width="0.15"/>
 
-    <!-- ───── PAGE 3 SHIMMER (placeholder) ───── -->
-    <rect x="3" y="105" width="5" height="14" fill="#ff0030" stroke="#444" stroke-width="0.1"/>
-    <text x="11" y="110.5" font-size="2.9" font-weight="700" fill="#fff">SHIMMER</text>
-    <text x="11" y="114.0" font-size="1.8" fill="#888">red • all NYI</text>
-    <text x="44" y="110.5" font-size="2.2" fill="#888">harmonics, brightness, stiffness, dynamics</text>
-    <text x="44" y="114.0" font-size="2.2" fill="#888">+ mode count, pickup, shim depth, shim rate</text>
-    <line x1="3" y1="121" x2="162" y2="121" stroke="#333" stroke-width="0.15"/>
+    <!-- ───── PAGE 3 OVERDRIVE ───── -->
+    <rect x="3" y="105" width="5" height="20" fill="#ff0030" stroke="#444" stroke-width="0.1"/>
+    <text x="11" y="110.5" font-size="2.9" font-weight="700" fill="#fff">OVERDRIVE</text>
+    <text x="11" y="114.0" font-size="1.8" fill="#888">red • end-of-chain</text>
+    <g font-size="2.5" fill="#fff">
+      <text x="44"  y="110.5">drive</text>
+      <text x="44"  y="115.0" fill="#888">+ reserved</text>
+      <text x="76"  y="110.5">warmth</text>
+      <text x="76"  y="115.0" fill="#888">+ reserved</text>
+      <text x="108" y="110.5">tone</text>
+      <text x="108" y="115.0" fill="#888">+ reserved</text>
+      <text x="138" y="110.5">vinyl noise</text>
+      <text x="138" y="115.0" fill="#fff">+ bias</text>
+    </g>
+    <line x1="3" y1="127" x2="162" y2="127" stroke="#333" stroke-width="0.15"/>
 
     <!-- ───── Chord stack zones ───── -->
-    <text x="3" y="127" font-size="2.4" font-weight="700" fill="#fff">Chord stack zones on BIG knob</text>
+    <text x="3" y="132" font-size="2.4" font-weight="700" fill="#fff">Chord stack zones on BIG knob</text>
     <g font-size="2.1" fill="#aaa">
-      <text x="3" y="131">0.00–0.03 <tspan fill="#fff">unison</tspan>  ·  0.03–0.40 <tspan fill="#fff">detune (phat)</tspan>  ·  0.40–0.55 <tspan fill="#fff">+3rd</tspan></text>
-      <text x="3" y="134.5">0.55–0.70 <tspan fill="#fff">+5th</tspan>  ·  0.70–0.85 <tspan fill="#fff">+7th</tspan>  ·  0.85–1.00 <tspan fill="#fff">+9th</tspan></text>
-      <text x="3" y="138">Modes (BIG + shift):  major / minor / dom7 / dim / sus2 / sus4</text>
-      <text x="3" y="141.5">Sub-osc: 3 saws mirroring first 3 chord ratios, shifted −1 oct (detune + chord progression follow BIG)</text>
+      <text x="3" y="136">0.00–0.03 <tspan fill="#fff">unison</tspan>  ·  0.03–0.40 <tspan fill="#fff">detune (phat)</tspan>  ·  0.40–0.55 <tspan fill="#fff">+3rd</tspan></text>
+      <text x="3" y="139.5">0.55–0.70 <tspan fill="#fff">+5th</tspan>  ·  0.70–0.85 <tspan fill="#fff">+7th</tspan>  ·  0.85–1.00 <tspan fill="#fff">+9th</tspan></text>
+      <text x="3" y="143">Modes (BIG + shift):  major / minor / dom7 / dim / sus2 / sus4</text>
+      <text x="3" y="146.5">Sub-osc: 3 saws at first 3 chord ratios, shifted −1 oct (hardcoded mix, follows BIG zones)</text>
     </g>
-    <line x1="3" y1="144" x2="162" y2="144" stroke="#333" stroke-width="0.15"/>
+    <line x1="3" y1="149" x2="162" y2="149" stroke="#333" stroke-width="0.15"/>
 
-    <!-- ───── KS excitation + reverb behaviour ───── -->
-    <text x="3" y="149" font-size="2.4" font-weight="700" fill="#fff">Excitation &amp; reverb feel</text>
+    <!-- ───── Signal chain notes ───── -->
+    <text x="3" y="153.5" font-size="2.4" font-weight="700" fill="#fff">Signal chain</text>
     <g font-size="2.1" fill="#aaa">
-      <text x="3" y="152.5">K-S exciter = pulse osc on PERF SMALL (log 50–250 Hz, jittery PWM). Internal noise plucks REMOVED.</text>
-      <text x="3" y="155">External IN L is summed into K-S loop input at ×0.10 (Strega-style — chord stack filters the input).</text>
-      <text x="3" y="157.5">Reverb input has SoftLimit + 2 s side-chain envelope → new chord/octave changes ramp slowly into the wet wash.</text>
-      <text x="3" y="160">Reverb input range 0.15..0.40 (REVERB LVL1 + shift = drive). Tail length set by reverb_size (REVERB BIG, full CW = freeze).</text>
+      <text x="3" y="157">K-S exciter = pulse osc on PERF SMALL (log 50–250 Hz, jittery PWM + ±0.5 % freq smear). PERF SMALL-shift = pulse gain.</text>
+      <text x="3" y="159.5">IN L summed into K-S loop input at ×0.10 (Strega-style — chord stack filters the input). IN R unused.</text>
+      <text x="3" y="162">Reverb: 32-bit float buffer in CCM, 16 allpasses, 2-pole loop damping, Haas stereo decorr at input, predelay 0..62 ms.</text>
+      <text x="3" y="164.5">OVERDRIVE end-of-chain: DC blocker → bias → drive → smooth↔hard saturator → post-LPF tone. Hard-bypassed below 0.5 % drive.</text>
     </g>
-    <line x1="3" y1="162.5" x2="162" y2="162.5" stroke="#333" stroke-width="0.15"/>
+    <line x1="3" y1="167" x2="162" y2="167" stroke="#333" stroke-width="0.15"/>
 
     <!-- ───── LED + I/O notes ───── -->
-    <text x="3" y="167" font-size="2.4" font-weight="700" fill="#fff">LEDs &amp; I/O · calibration</text>
+    <text x="3" y="171" font-size="2.4" font-weight="700" fill="#fff">LEDs &amp; I/O · calibration</text>
     <g font-size="2.1" fill="#aaa">
-      <text x="3"  y="170.5">Main LED unshifted: stack-zone colour (white / cyan / green / amber / orange / red). Solid red = clip.</text>
-      <text x="3"  y="173">Main LED shifted on Page 0: chord-mode colour (green/blue/amber/red/cyan/violet = maj/min/dom7/dim/sus2/sus4).</text>
-      <text x="3"  y="175.5">OSC LED = page (off/grn/org/red). Doubles as V/oct cal indicator (boot-hold button: blink grn = +1V, ylw = +3V, sld grn = saved).</text>
-      <text x="3"  y="178">CV jacks (L→R): PITCH (V/oct), LPF, CHORD, PULSE. IN L = audio excite. IN R = trigger (unused now — plucks removed).</text>
+      <text x="3"  y="174.5">Main LED unshifted: stack-zone colour (white / cyan / green / amber / orange / red). Solid red = clip.</text>
+      <text x="3"  y="177">OSC LED = page (off/grn/org/red). On OVERDRIVE: full red = active, dim red (30 %) = bypassed (drive &lt; 0.5 %).</text>
+      <text x="3"  y="179.5">V/oct cal: boot-hold button → blink grn = +1V, ylw = +3V, sld grn = saved. CV: PITCH, LPF, CHORD, PULSE. IN L = audio excite.</text>
     </g>
   </g>
 

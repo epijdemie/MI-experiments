@@ -1,7 +1,4 @@
-// Erbe-Verb-style firmware variant - entry point.
-//
-// Mirrors warps/warps.cc but runs the codec at 48 kHz and routes audio through
-// warps_reverb::Reverb instead of warps::Modulator.
+// reverb firmware variant - entry point. 48k codec, routes through Reverb
 
 #include "warps/drivers/codec.h"
 #include "warps/drivers/system.h"
@@ -14,7 +11,7 @@
 using namespace warps_reverb;
 using namespace stmlib;
 
-// 64 KB FxEngine buffer in main SRAM (.bss by default).
+// 64k FxEngine buffer in main sram
 uint16_t reverb_buffer[Reverb::kBufferSize];
 
 warps::Codec   codec;
@@ -71,10 +68,7 @@ void FillBuffer(warps::Codec::Frame* input,
 }
 
 void Init() {
-  // sys.Init(false) -> don't offset VTOR. Our firmware is linked at
-  // 0x08000000 (no bootloader); the stock warps::System::Init(true) call
-  // adds +0x8000 to VTOR which assumes APPLICATION_LARGE layout - that
-  // points the vector table at empty flash and no ISRs fire.
+  // sys.Init(false) - no VTOR offset (link at 0x08000000, no bootloader)
   sys.Init(false);
   version.Init();
 
@@ -94,7 +88,6 @@ void Init() {
 int main(void) {
   Init();
   while (1) {
-    // All work happens in the codec ISR. Main loop can host slow tasks
-    // later (settings save to flash, LED animations, etc.).
+    // all work runs in the codec isr
   }
 }
