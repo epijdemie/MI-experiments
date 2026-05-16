@@ -9,6 +9,8 @@
 #ifndef WARPS_DRONE_DSP_MODAL_BANK_H_
 #define WARPS_DRONE_DSP_MODAL_BANK_H_
 
+#include <math.h>
+
 #include "stmlib/stmlib.h"
 #include "stmlib/dsp/dsp.h"
 #include "stmlib/dsp/filter.h"
@@ -29,8 +31,26 @@ class ModalBank {
     }
     fundamental_hz_ = 110.0f;
     stiffness_     = 0.0f;
+    active_modes_  = kNumModes;
+    pickup_pos_    = 0.5f;
     set_q(20.0f);
     RecomputeFrequencies();
+    RecomputeAmps();
+  }
+
+  // Active mode count, 1..kNumModes. Higher = brighter / fuller spectrum.
+  inline void set_active_modes(int count) {
+    if (count < 1) count = 1;
+    if (count > kNumModes) count = kNumModes;
+    active_modes_ = count;
+  }
+
+  // Pickup position 0..1 - cosine-weights modes to simulate where you
+  // "pluck" / pickup a string. 0 = node (suppresses even modes),
+  // 0.5 = balanced, 1 = other end.
+  inline void set_pickup(float p) {
+    pickup_pos_ = p;
+    RecomputeAmps();
   }
 
   // Fundamental in Hz. Modes are tuned to integer multiples (plus stiffness).
@@ -63,7 +83,7 @@ class ModalBank {
   // Tick one sample. Sum of BPF outputs, scaled to roughly unit gain.
   inline float Process(float in) {
     float acc = 0.0f;
-    for (int i = 0; i < kNumModes; ++i) {
+    for (int i = 0; i < active_modes_; ++i) {
       acc += modes_[i].Process<stmlib::FILTER_MODE_BAND_PASS_NORMALIZED>(in)
              * amp_[i];
     }
@@ -96,6 +116,18 @@ class ModalBank {
     RecomputeFrequencies();
   }
 
+  void RecomputeAmps() {
+    // Base envelope = 1/(1+i) (natural overtone falloff) modulated by
+    // a pickup-position raised cosine weighting.
+    for (int i = 0; i < kNumModes; ++i) {
+      const float natural = 1.0f / (1.0f + static_cast<float>(i));
+      const float pos_angle = pickup_pos_ * 3.14159265f *
+                              static_cast<float>(i + 1);
+      const float pickup_w = 0.4f + 0.6f * fabsf(sinf(pos_angle));
+      amp_[i] = natural * pickup_w;
+    }
+  }
+
   stmlib::Svf modes_[kNumModes];
   float       q_table_[kNumModes];
   float       amp_[kNumModes];
@@ -104,6 +136,8 @@ class ModalBank {
   float       stiffness_;
   float       q_base_     = 20.0f;
   float       brightness_ = 0.8f;
+  int         active_modes_ = kNumModes;
+  float       pickup_pos_   = 0.5f;
 
   DISALLOW_COPY_AND_ASSIGN(ModalBank);
 };

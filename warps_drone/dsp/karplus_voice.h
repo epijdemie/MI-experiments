@@ -43,8 +43,11 @@ class KarplusVoice {
     decay_      = 0.995f;
     damp_a_     = 0.5f;
     damp_b_     = 0.5f;
-    excite_     = 0.0f;
-    excite_phase_ = 0;
+    excite_amount_  = 0.0f;
+    excite_phase_   = 0;
+    excite_length_  = 1;
+    excite_shape_   = 0.0f;
+    excite_active_  = false;
     pink_.Init();
   }
 
@@ -67,17 +70,29 @@ class KarplusVoice {
     damp_a_ = 1.0f - damp_b_;
   }
 
-  // Inject a noise burst of duration ~delay_len_ * fraction. Called on
-  // every "pluck" gesture (when you wants a re-attack) or
-  // continuously at low amplitude to keep the string fed.
-  inline void Excite(float amount, int duration) {
-    excite_       = amount;
-    excite_phase_ = duration;
+  // Inject a noise burst whose amplitude envelope morphs through four
+  // shapes across `length` samples. `shape` (0..1) selects the morph:
+  //   0.00  rectangle    (constant - classic Karplus excitation)
+  //   0.33  negative saw (peak -> 0 - decaying pluck)
+  //   0.67  triangle     (0 -> peak -> 0)
+  //   1.00  saw          (0 -> peak - rising swell)
+  // The burst always lasts the full `length` regardless of shape.
+  // (Order chosen so CCW = instant hit, CW = slow swell - each step is
+  // sonically distinct rather than two near-equivalent decaying shapes.)
+  inline void Excite(float amount, int length, float shape) {
+    excite_amount_  = amount;
+    excite_length_  = length > 0 ? length : 1;
+    excite_shape_   = shape < 0.0f ? 0.0f : (shape > 1.0f ? 1.0f : shape);
+    excite_phase_   = 0;
+    excite_active_  = true;
   }
 
   // Continuous noise injection at the input. amount=0..1 maps to
   // ambient noise level mixed into the loop every sample.
   inline void set_noise_floor(float amount) { noise_floor_ = amount; }
+
+  // 0 = pure pink (thick, low-end weighted), 1 = pure white (bright).
+  inline void set_noise_color(float mix) { noise_color_mix_ = mix; }
 
   // One audio-rate tick. `feedback_in` is the external signal mixed
   // into the string input (reverb tail, neighbour-voice cross-talk, etc.).
@@ -95,16 +110,43 @@ class KarplusVoice {
     float filt = damp_a_ * y + damp_b_ * prev_y_;
     prev_y_ = y;
 
-    // Excitation: pluck transient uses white noise (sharp attack), the
-    // continuous noise floor uses pink for a thick, low-end-weighted
-    // texture that excites the string's lower harmonics more strongly.
+    // Excitation: white-noise burst whose amplitude envelope morphs
+    // between rectangle / saw / triangle / negative-saw across the
+    // full burst length. Continuous noise floor is independent and
+    // always pink/white-mixed.
     float exc = 0.0f;
-    if (excite_phase_ > 0) {
-      exc = excite_ * (2.0f * stmlib::Random::GetFloat() - 1.0f);
-      --excite_phase_;
+    if (excite_active_) {
+      if (excite_phase_ >= excite_length_) {
+        excite_active_ = false;
+      } else {
+        const float t = static_cast<float>(excite_phase_) /
+                        static_cast<float>(excite_length_);
+        const float rect = 1.0f;
+        const float saw  = t;
+        const float tri  = t < 0.5f ? 2.0f * t : 2.0f * (1.0f - t);
+        const float nsaw = 1.0f - t;
+        float env;
+        const float bs = excite_shape_;
+        if (bs < 0.333333f) {
+          const float u = bs * 3.0f;
+          env = rect + (nsaw - rect) * u;
+        } else if (bs < 0.666667f) {
+          const float u = (bs - 0.333333f) * 3.0f;
+          env = nsaw + (tri - nsaw) * u;
+        } else {
+          const float u = (bs - 0.666667f) * 3.0f;
+          env = tri + (saw - tri) * u;
+        }
+        exc = excite_amount_ * env *
+              (2.0f * stmlib::Random::GetFloat() - 1.0f);
+        ++excite_phase_;
+      }
     }
     if (noise_floor_ > 0.0f) {
-      exc += noise_floor_ * pink_.Next();
+      const float pink = pink_.Next();
+      const float white = 2.0f * stmlib::Random::GetFloat() - 1.0f;
+      exc += noise_floor_ *
+             (pink * (1.0f - noise_color_mix_) + white * noise_color_mix_);
     }
 
     float input = filt * decay_ + exc + feedback_in;
@@ -124,9 +166,13 @@ class KarplusVoice {
   float decay_;
   float damp_a_;
   float damp_b_;
-  float excite_;
-  int   excite_phase_;
-  float noise_floor_ = 0.0f;
+  float excite_amount_  = 0.0f;
+  int   excite_phase_   = 0;
+  int   excite_length_  = 1;
+  float excite_shape_   = 0.0f;
+  bool  excite_active_  = false;
+  float noise_floor_    = 0.0f;
+  float noise_color_mix_ = 0.0f;   // 0=pink, 1=white
   PinkNoise pink_;
 
   DISALLOW_COPY_AND_ASSIGN(KarplusVoice);

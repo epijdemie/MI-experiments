@@ -31,15 +31,17 @@ class PlateReverb {
 
   void Init(uint16_t* buffer, float sample_rate) {
     engine_.Init(buffer);
-    engine_.SetLFOFrequency(LFO_1, 0.5f / sample_rate);
-    engine_.SetLFOFrequency(LFO_2, 0.3f / sample_rate);
+    sample_rate_  = sample_rate;
     lp_           = 0.7f;
     diffusion_    = 0.7f;
     amount_       = 0.5f;
     input_gain_   = 0.5f;
     reverb_time_  = 0.7f;
+    shimmer_depth_ = 1.0f;
+    shimmer_rate_  = 1.0f;
     lp_decay_1_   = 0.0f;
     lp_decay_2_   = 0.0f;
+    UpdateLfos();
   }
 
   // Processes a stereo block in place. amount_ is wet/dry mix.
@@ -85,7 +87,7 @@ class PlateReverb {
       float apout = 0.0f;
       engine_.Start(&c);
 
-      c.Interpolate(ap1, 10.0f, LFO_1, 60.0f, 1.0f);
+      c.Interpolate(ap1, 10.0f, LFO_1, 60.0f * shimmer_depth_, 1.0f);
       c.Write(ap1, 100, 0.0f);
 
       c.Read(in_out->l + in_out->r, gain);
@@ -101,7 +103,7 @@ class PlateReverb {
       c.Write(apout);
 
       c.Load(apout);
-      c.Interpolate(del2, 4680.0f, LFO_2, 100.0f, krt);
+      c.Interpolate(del2, 4680.0f, LFO_2, 100.0f * shimmer_depth_, krt);
       c.Lp(lp_1, klp);
       c.Read(dap1a TAIL, -kap);
       c.WriteAllPass(dap1a, kap);
@@ -140,19 +142,36 @@ class PlateReverb {
   inline void set_diffusion (float d)  { diffusion_   = d; }
   inline void set_lp        (float l)  { lp_          = l; }
 
+  inline void set_shimmer_depth(float d) { shimmer_depth_ = d; }
+  inline void set_shimmer_rate (float r) {
+    if (r < 0.05f) r = 0.05f;   // never freeze the LFOs
+    if (r != shimmer_rate_) {
+      shimmer_rate_ = r;
+      UpdateLfos();
+    }
+  }
+
   // Running mean-square of the wet signal across the last Process() call.
   // Caller uses this to drive a "reverb tail -> exciter" feedback path.
   inline float tail_energy() const { return tail_energy_; }
 
  private:
+  void UpdateLfos() {
+    engine_.SetLFOFrequency(LFO_1, (0.5f * shimmer_rate_) / sample_rate_);
+    engine_.SetLFOFrequency(LFO_2, (0.3f * shimmer_rate_) / sample_rate_);
+  }
+
   typedef FxEngine<kBufferSize, FORMAT_12_BIT> E;
   E engine_;
 
+  float sample_rate_;
   float amount_;
   float input_gain_;
   float reverb_time_;
   float diffusion_;
   float lp_;
+  float shimmer_depth_;
+  float shimmer_rate_;
   float lp_decay_1_;
   float lp_decay_2_;
   float tail_energy_ = 0.0f;
