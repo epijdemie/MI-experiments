@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Panel cheatsheet for the Erbe-Verb-style firmware variant on Warps.
+  Dimensions: 10 HP × 128.5 mm (Eurorack standard).
+  Open in a browser to preview, or in Inkscape/Illustrator to edit before
+  printing as sticker overlays. Component positions are approximated from
+  the stock Warps panel photo — adjust if your unit is a clone with
+  slightly different layout.
+-->
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="50.5mm" height="128.5mm"
+     viewBox="0 0 50.5 128.5"
+     font-family="-apple-system, 'Helvetica Neue', Arial, sans-serif">
+
+  <!-- ============== panel base ============== -->
+  <rect x="0" y="0" width="50.5" height="128.5"
+        fill="#0a0a0a" stroke="#000" stroke-width="0.2"/>
+
+  <!-- mounting holes (cosmetic — won't be cut by sticker print) -->
+  <g fill="#1a1a1a">
+    <circle cx="3.0"  cy="3.0"   r="1.5"/>
+    <circle cx="47.5" cy="3.0"   r="1.5"/>
+    <circle cx="3.0"  cy="125.5" r="1.5"/>
+    <circle cx="47.5" cy="125.5" r="1.5"/>
+  </g>
+
+  <!-- title -->
+  <text x="25.25" y="6.5" font-size="2.8" font-weight="700"
+        fill="#fff" text-anchor="middle" letter-spacing="0.4">
+    REVERB
+  </text>
+  <text x="25.25" y="9.5" font-size="1.6" font-weight="400"
+        fill="#888" text-anchor="middle" letter-spacing="0.5">
+    erbe-verb fw
+  </text>
+  <line x1="3" y1="11" x2="47.5" y2="11" stroke="#444" stroke-width="0.15"/>
+
+  <!-- ============== ALGORITHM big knob ============== -->
+  <!-- knob body -->
+  <circle cx="25.25" cy="33" r="11" fill="#1a1a1a" stroke="#fff" stroke-width="0.3"/>
+  <circle cx="25.25" cy="33" r="9.5" fill="#fafafa"/>
+  <line x1="25.25" y1="33" x2="25.25" y2="24.5" stroke="#000" stroke-width="0.5" stroke-linecap="round"/>
+
+  <!-- primary label (unshifted) -->
+  <text x="25.25" y="50" font-size="2.8" font-weight="700"
+        fill="#fff" text-anchor="middle" letter-spacing="0.3">
+    DECAY
+  </text>
+  <!-- shifted label -->
+  <text x="25.25" y="53.2" font-size="1.6" font-weight="400"
+        fill="#7fc8ff" text-anchor="middle" letter-spacing="0.3">
+    + hold → SHIMMER
+  </text>
+
+  <!-- ============== INT OSC button + LED ============== -->
+  <circle cx="9.5"  cy="65" r="2.2" fill="#fafafa" stroke="#fff" stroke-width="0.2"/>
+  <circle cx="13.8" cy="63.5" r="0.7" fill="#ff3030"/>
+
+  <text x="9.5" y="69.5" font-size="1.5" font-weight="700"
+        fill="#fff" text-anchor="middle" letter-spacing="0.2">
+    BUTTON
+  </text>
+  <text x="9.5" y="71.5" font-size="1.1" fill="#aaa" text-anchor="middle">tap = reverse</text>
+  <text x="9.5" y="73.0" font-size="1.1" fill="#aaa" text-anchor="middle">2× = freeze</text>
+  <text x="9.5" y="74.5" font-size="1.1" fill="#7fc8ff" text-anchor="middle">hold = shift</text>
+
+  <!-- ============== TIMBRE medium knob ============== -->
+  <circle cx="33" cy="65" r="5.5" fill="#1a1a1a" stroke="#fff" stroke-width="0.25"/>
+  <circle cx="33" cy="65" r="4.5" fill="#fafafa"/>
+  <line x1="33" y1="65" x2="33" y2="61" stroke="#000" stroke-width="0.4" stroke-linecap="round"/>
+
+  <text x="33" y="74" font-size="2.3" font-weight="700"
+        fill="#fff" text-anchor="middle" letter-spacing="0.3">
+    SIZE
+  </text>
+  <text x="33" y="76.5" font-size="1.4" fill="#7fc8ff" text-anchor="middle">
+    + hold → DIFFUSION
+  </text>
+
+  <!-- ============== LEVEL 1 / LEVEL 2 trimmers ============== -->
+  <circle cx="11"  cy="85" r="2.8" fill="#1a1a1a" stroke="#fff" stroke-width="0.2"/>
+  <circle cx="11"  cy="85" r="2.2" fill="#fafafa"/>
+  <line x1="11" y1="85" x2="11" y2="82.8" stroke="#000" stroke-width="0.3" stroke-linecap="round"/>
+
+  <circle cx="20.5" cy="85" r="2.8" fill="#1a1a1a" stroke="#fff" stroke-width="0.2"/>
+  <circle cx="20.5" cy="85" r="2.2" fill="#fafafa"/>
+  <line x1="20.5" y1="85" x2="20.5" y2="82.8" stroke="#000" stroke-width="0.3" stroke-linecap="round"/>
+
+  <text x="11"   y="90.5" font-size="1.7" font-weight="700"
+        fill="#fff" text-anchor="middle">MOTION</text>
+  <text x="11"   y="92.5" font-size="1.2" fill="#7fc8ff" text-anchor="middle">+ SPEED</text>
+
+  <text x="20.5" y="90.5" font-size="1.7" font-weight="700"
+        fill="#fff" text-anchor="middle">DRY/WET</text>
+  <text x="20.5" y="92.5" font-size="1.2" fill="#7fc8ff" text-anchor="middle">+ PRE-DELAY</text>
+
+  <!-- ============== separator before jack rows ============== -->
+  <line x1="3" y1="96" x2="47.5" y2="96" stroke="#444" stroke-width="0.15"/>
+
+  <!-- ============== CV jack row (top) ============== -->
+  <g>
+    <!-- jack 1 = LEVEL 1 CV → MOTION CV -->
+    <circle cx="8"  cy="103" r="2.4" fill="#1a1a1a" stroke="#888" stroke-width="0.2"/>
+    <circle cx="8"  cy="103" r="1.0" fill="#0a0a0a"/>
+    <text x="8"  y="99.4" font-size="1.4" fill="#fff" text-anchor="middle" font-weight="700">MOTION</text>
+    <text x="8"  y="100.7" font-size="0.95" fill="#888" text-anchor="middle">CV</text>
+
+    <!-- jack 2 = LEVEL 2 CV → DRY/WET CV -->
+    <circle cx="19" cy="103" r="2.4" fill="#1a1a1a" stroke="#888" stroke-width="0.2"/>
+    <circle cx="19" cy="103" r="1.0" fill="#0a0a0a"/>
+    <text x="19" y="99.4" font-size="1.4" fill="#fff" text-anchor="middle" font-weight="700">DRY/WET</text>
+    <text x="19" y="100.7" font-size="0.95" fill="#888" text-anchor="middle">CV</text>
+
+    <!-- jack 3 = ALGO CV → DECAY CV -->
+    <circle cx="30" cy="103" r="2.4" fill="#1a1a1a" stroke="#888" stroke-width="0.2"/>
+    <circle cx="30" cy="103" r="1.0" fill="#0a0a0a"/>
+    <text x="30" y="99.4" font-size="1.4" fill="#fff" text-anchor="middle" font-weight="700">DECAY</text>
+    <text x="30" y="100.7" font-size="0.95" fill="#888" text-anchor="middle">CV</text>
+
+    <!-- jack 4 = TIMBRE CV → SIZE CV -->
+    <circle cx="41" cy="103" r="2.4" fill="#1a1a1a" stroke="#888" stroke-width="0.2"/>
+    <circle cx="41" cy="103" r="1.0" fill="#0a0a0a"/>
+    <text x="41" y="99.4" font-size="1.3" fill="#fff" text-anchor="middle" font-weight="700">SIZE</text>
+    <text x="41" y="100.7" font-size="0.95" fill="#888" text-anchor="middle">CV</text>
+  </g>
+
+  <!-- ============== Audio jack row (bottom) ============== -->
+  <g>
+    <!-- jack 1 = stereo input L -->
+    <circle cx="8"  cy="115" r="2.4" fill="#1a1a1a" stroke="#fff" stroke-width="0.25"/>
+    <circle cx="8"  cy="115" r="1.0" fill="#0a0a0a"/>
+    <text x="8"  y="120" font-size="1.6" fill="#fff" text-anchor="middle" font-weight="700">IN L</text>
+
+    <!-- jack 2 = stereo input R (sidechain duck input later) -->
+    <circle cx="19" cy="115" r="2.4" fill="#1a1a1a" stroke="#fff" stroke-width="0.25"/>
+    <circle cx="19" cy="115" r="1.0" fill="#0a0a0a"/>
+    <text x="19" y="120" font-size="1.6" fill="#fff" text-anchor="middle" font-weight="700">IN R</text>
+
+    <!-- jack 3 = stereo output L -->
+    <circle cx="30" cy="115" r="2.4" fill="#1a1a1a" stroke="#ffd060" stroke-width="0.25"/>
+    <circle cx="30" cy="115" r="1.0" fill="#0a0a0a"/>
+    <text x="30" y="120" font-size="1.6" fill="#ffd060" text-anchor="middle" font-weight="700">OUT L</text>
+
+    <!-- jack 4 = stereo output R -->
+    <circle cx="41" cy="115" r="2.4" fill="#1a1a1a" stroke="#ffd060" stroke-width="0.25"/>
+    <circle cx="41" cy="115" r="1.0" fill="#0a0a0a"/>
+    <text x="41" y="120" font-size="1.6" fill="#ffd060" text-anchor="middle" font-weight="700">OUT R</text>
+  </g>
+
+  <!-- bottom signature line -->
+  <line x1="3" y1="122.5" x2="47.5" y2="122.5" stroke="#444" stroke-width="0.15"/>
+
+  <!-- ============== legend on a side strip for the cheatsheet form ============== -->
+  <!-- Not on the panel itself — visible only when SVG is viewed at full canvas. -->
+</svg>
