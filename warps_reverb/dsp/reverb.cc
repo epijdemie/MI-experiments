@@ -26,18 +26,21 @@ constexpr float kMatrixComp = 1.0f;
 // fxengine output ap gain (fixed). dattorro standard
 constexpr float kOutAp = 0.5f;
 
-// hardcoded: diffusion knob was barely audible. these are the gains we
-// landed on (dattorro pair × 0.85 knob)
-constexpr float kInputDiffA = 0.75f  * 0.85f;
-constexpr float kInputDiffB = 0.625f * 0.85f;
-constexpr float kBranchDiff = 0.7f   * 0.85f;
+// hardcoded diffusion (knob was barely audible). full dattorro values now,
+// no scaling — more smearing of early reflections so they sound less like
+// the dry input punching through the tail
+constexpr float kInputDiffA = 0.75f;
+constexpr float kInputDiffB = 0.625f;
+constexpr float kBranchDiff = 0.70f;
 
-// in-loop absorption LP center. ~7 kHz at 48k - tail stays bright.
-// spectral modulation moves around this point in a SMALL window
-constexpr float kAbsorbCenter = 0.6f;
-// spectral max swing ±0.10 → k ∈ [0.5, 0.7], corner 5..9 kHz.
-// keeps the tail audibly long even at full spectral
-constexpr float kMaxSpectral = 0.10f;
+// in-loop absorption LP at fixed bright corner. spectral modulation no
+// longer touches this — APs are modulated instead so the tail can't be
+// damped down by the spectral knob
+constexpr float kAbsorbFixed = 0.60f;
+// spectral modulates branch-AP gain ± this. ap preserves magnitude (only
+// phase changes), so this is frequency-domain peak/notch movement, NOT
+// damping. tail length unaffected at any spectral position
+constexpr float kMaxSpectral = 0.18f;
 
 // spectral oscillator rates (Hz). slow + mutually incommensurate
 constexpr float kSpectralRateHz[4] = { 0.073f, 0.097f, 0.131f, 0.181f };
@@ -218,15 +221,19 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
     const float v2 = oc2 * y1_2 - y2_2; y2_2 = y1_2; y1_2 = v2;
     const float v3 = oc3 * y1_3 - y2_3; y2_3 = y1_3; y1_3 = v3;
 
-    // per-branch lp coefficients - narrow modulation around bright center
-    float k_b0 = kAbsorbCenter + spectral * v0;
-    float k_b1 = kAbsorbCenter + spectral * v1;
-    float k_b2 = kAbsorbCenter + spectral * v2;
-    float k_b3 = kAbsorbCenter + spectral * v3;
-    if (k_b0 < 0.20f) k_b0 = 0.20f; else if (k_b0 > 0.90f) k_b0 = 0.90f;
-    if (k_b1 < 0.20f) k_b1 = 0.20f; else if (k_b1 > 0.90f) k_b1 = 0.90f;
-    if (k_b2 < 0.20f) k_b2 = 0.20f; else if (k_b2 > 0.90f) k_b2 = 0.90f;
-    if (k_b3 < 0.20f) k_b3 = 0.20f; else if (k_b3 > 0.90f) k_b3 = 0.90f;
+    // per-branch in-loop AP gain - magnitude-preserving modulation.
+    // each line's AP gain shifts independently around kBranchDiff →
+    // phase response varies → peaks/notches in the recirculating spectrum
+    // wander, without losing any energy. tail stays full length
+    float ap_g0 = kBranchDiff + spectral * v0;
+    float ap_g1 = kBranchDiff + spectral * v1;
+    float ap_g2 = kBranchDiff + spectral * v2;
+    float ap_g3 = kBranchDiff + spectral * v3;
+    // clamp to safe AP gain range (must stay < 1 for stability)
+    if (ap_g0 < 0.30f) ap_g0 = 0.30f; else if (ap_g0 > 0.88f) ap_g0 = 0.88f;
+    if (ap_g1 < 0.30f) ap_g1 = 0.30f; else if (ap_g1 > 0.88f) ap_g1 = 0.88f;
+    if (ap_g2 < 0.30f) ap_g2 = 0.30f; else if (ap_g2 > 0.88f) ap_g2 = 0.88f;
+    if (ap_g3 < 0.30f) ap_g3 = 0.30f; else if (ap_g3 > 0.88f) ap_g3 = 0.88f;
 
     engine_.Start(&c);
 
@@ -258,30 +265,30 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
     float b0, b1, b2, b3;
 
     c.Load(wet_in + r0);
-    c.Read(ap0 TAIL, -kBranchDiff);
-    c.WriteAllPass(ap0, kBranchDiff);
-    c.Lp(lp0, k_b0);
+    c.Read(ap0 TAIL, -ap_g0);
+    c.WriteAllPass(ap0, ap_g0);
+    c.Lp(lp0, kAbsorbFixed);
     c.Hp(hp0, khp);
     c.Write(b0, 0.0f);
 
     c.Load(wet_in + r1);
-    c.Read(ap1 TAIL, kBranchDiff);
-    c.WriteAllPass(ap1, -kBranchDiff);
-    c.Lp(lp1, k_b1);
+    c.Read(ap1 TAIL, ap_g1);
+    c.WriteAllPass(ap1, -ap_g1);
+    c.Lp(lp1, kAbsorbFixed);
     c.Hp(hp1, khp);
     c.Write(b1, 0.0f);
 
     c.Load(wet_in + r2);
-    c.Read(ap2 TAIL, -kBranchDiff);
-    c.WriteAllPass(ap2, kBranchDiff);
-    c.Lp(lp2, k_b2);
+    c.Read(ap2 TAIL, -ap_g2);
+    c.WriteAllPass(ap2, ap_g2);
+    c.Lp(lp2, kAbsorbFixed);
     c.Hp(hp2, khp);
     c.Write(b2, 0.0f);
 
     c.Load(wet_in + r3);
-    c.Read(ap3 TAIL, kBranchDiff);
-    c.WriteAllPass(ap3, -kBranchDiff);
-    c.Lp(lp3, k_b3);
+    c.Read(ap3 TAIL, ap_g3);
+    c.WriteAllPass(ap3, -ap_g3);
+    c.Lp(lp3, kAbsorbFixed);
     c.Hp(hp3, khp);
     c.Write(b3, 0.0f);
 
