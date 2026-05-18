@@ -50,16 +50,18 @@ class Reverb {
 
   MixingMatrix matrix_;
 
-  float lpf_state_[4];
-  float hpf_state_[4];
+  float lpf_state_[4];     // air-absorption lp (fixed corner)
+  float tilt_state_[4];    // tone-tilt lp/hp split state
+  float hpf_state_[4];     // low-cut hp
 
   // tick -> process cache
   float coef_input_gain_;
   float coef_pre_delay_samples_;
   float coef_diffusion_;
   float coef_feedback_;
-  float coef_tilt_lpf_;
   float coef_low_cut_hp_;
+  float coef_tilt_lp_gain_;
+  float coef_tilt_hp_gain_;
   float coef_dry_wet_;
   float coef_mod_amplitude_;
 

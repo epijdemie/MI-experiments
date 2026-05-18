@@ -22,6 +22,15 @@ constexpr float kPreDelayMaxSamples = 4800.0f;  // 100ms @ 48k
 // matrix gain compensation. 0.7 ≈ 1/√2 (peak of hadamard at α=1)
 constexpr float kMatrixComp = 0.7f;
 
+// air-absorption lp coefficient. k = 1 - exp(-2π*5300/48000) ≈ 0.50.
+// fixed at ~5 kHz so the tail loses high content at a natural rate even
+// when tilt eq is wide open at the bright end
+constexpr float kAbsorbCoef = 0.50f;
+
+// tilt eq split coefficient. k ≈ 2π*800/48000 ≈ 0.105. ~800 Hz crossover
+// between "warm" lf and "airy" hf bands
+constexpr float kTiltCoef = 0.105f;
+
 // smooth sat: y = x / ⁴√(1 + x⁴). bounded ±1, smooth knee
 inline float SmoothSat(float x) {
   const float x2 = x * x;
@@ -37,6 +46,7 @@ void Reverb::Init(uint16_t* buffer, float sample_rate) {
 
   engine_.Init(buffer);
   std::memset(lpf_state_, 0, sizeof(lpf_state_));
+  std::memset(tilt_state_, 0, sizeof(tilt_state_));
   std::memset(hpf_state_, 0, sizeof(hpf_state_));
 
   parameters_.decay      = 0.5f;
@@ -56,7 +66,6 @@ void Reverb::Tick() {
   coef_pre_delay_samples_  = parameters_.pre_delay * kPreDelayMaxSamples;
   coef_diffusion_          = 0.8f * parameters_.diffusion;
   coef_feedback_           = parameters_.decay;        // 0..1
-  coef_tilt_lpf_           = 0.3f + 0.68f * parameters_.tone;
   coef_mod_amplitude_      = parameters_.modulation * 0.6f;
   coef_dry_wet_            = parameters_.dry_wet;
 
@@ -64,6 +73,18 @@ void Reverb::Tick() {
   // k = 2π * f / fs. always slightly active so the loop can't accumulate DC
   const float hp_hz = 5.0f * exp2f(parameters_.low_cut * 5.32f);
   coef_low_cut_hp_  = 2.0f * static_cast<float>(M_PI) * hp_hz / sample_rate_;
+
+  // tilt eq: complementary lp/hp gains around the 800 Hz split.
+  // tone < 0.5 → dark (attenuate hp); tone > 0.5 → bright (attenuate lp).
+  // both gains ≤ 1, neutral (= unity) at tone = 0.5 → loop stays bounded
+  const float tilt = (parameters_.tone - 0.5f) * 2.0f;       // -1..+1
+  if (tilt >= 0.0f) {
+    coef_tilt_lp_gain_ = 1.0f - tilt;
+    coef_tilt_hp_gain_ = 1.0f;
+  } else {
+    coef_tilt_lp_gain_ = 1.0f;
+    coef_tilt_hp_gain_ = 1.0f + tilt;
+  }
 
   // modulation knob drives lfo rate too. 0.1..1.6 Hz log
   const float lfo_hz = 0.1f * exp2f(parameters_.modulation * 4.0f);
@@ -100,8 +121,9 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
   const float pre       = coef_pre_delay_samples_;
   const float kap       = coef_diffusion_;
   const float kfb       = coef_feedback_;
-  const float klp       = coef_tilt_lpf_;
   const float khp       = coef_low_cut_hp_;
+  const float lp_gain   = coef_tilt_lp_gain_;
+  const float hp_gain   = coef_tilt_hp_gain_;
   const float wet       = coef_dry_wet_;
   const float ampl      = coef_mod_amplitude_;
   // size 0.4..1.4× - longest base 4421 × 1.4 = 6190 fits in 6200 reservation
@@ -135,11 +157,22 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
     // per-branch: ap diffuser -> modulated delay -> 1-pole lpf
     float b0, b1, b2, b3;
 
+    // per branch: ap -> mod delay -> air-lp -> tilt eq -> low-cut hp.
+    // tilt eq runs inline (needs lp/hp split); fxengine context wraps the rest
+    float branch_pre;
+
     c.Load(wet_in);
     c.Read(ap0 TAIL, -kap);
     c.WriteAllPass(ap0, kap);
     c.Interpolate(del0, tau0, LFO_1, ampl * tau0, 1.0f);
-    c.Lp(lp0, klp);
+    c.Lp(lp0, kAbsorbCoef);
+    c.Write(branch_pre, 0.0f);
+    tilt_state_[0] += kTiltCoef * (branch_pre - tilt_state_[0]);
+    {
+      const float lp_part = tilt_state_[0];
+      const float hp_part = branch_pre - lp_part;
+      c.Load(lp_part * lp_gain + hp_part * hp_gain);
+    }
     c.Hp(hp0, khp);
     c.Write(b0, 0.0f);
 
@@ -147,7 +180,14 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
     c.Read(ap1 TAIL, kap);
     c.WriteAllPass(ap1, -kap);
     c.Interpolate(del1, tau1, LFO_2, ampl * tau1, 1.0f);
-    c.Lp(lp1, klp);
+    c.Lp(lp1, kAbsorbCoef);
+    c.Write(branch_pre, 0.0f);
+    tilt_state_[1] += kTiltCoef * (branch_pre - tilt_state_[1]);
+    {
+      const float lp_part = tilt_state_[1];
+      const float hp_part = branch_pre - lp_part;
+      c.Load(lp_part * lp_gain + hp_part * hp_gain);
+    }
     c.Hp(hp1, khp);
     c.Write(b1, 0.0f);
 
@@ -155,7 +195,14 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
     c.Read(ap2 TAIL, -kap);
     c.WriteAllPass(ap2, kap);
     c.Interpolate(del2, tau2, LFO_1, -ampl * tau2, 1.0f);
-    c.Lp(lp2, klp);
+    c.Lp(lp2, kAbsorbCoef);
+    c.Write(branch_pre, 0.0f);
+    tilt_state_[2] += kTiltCoef * (branch_pre - tilt_state_[2]);
+    {
+      const float lp_part = tilt_state_[2];
+      const float hp_part = branch_pre - lp_part;
+      c.Load(lp_part * lp_gain + hp_part * hp_gain);
+    }
     c.Hp(hp2, khp);
     c.Write(b2, 0.0f);
 
@@ -163,7 +210,14 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
     c.Read(ap3 TAIL, kap);
     c.WriteAllPass(ap3, -kap);
     c.Interpolate(del3, tau3, LFO_2, -ampl * tau3, 1.0f);
-    c.Lp(lp3, klp);
+    c.Lp(lp3, kAbsorbCoef);
+    c.Write(branch_pre, 0.0f);
+    tilt_state_[3] += kTiltCoef * (branch_pre - tilt_state_[3]);
+    {
+      const float lp_part = tilt_state_[3];
+      const float hp_part = branch_pre - lp_part;
+      c.Load(lp_part * lp_gain + hp_part * hp_gain);
+    }
     c.Hp(hp3, khp);
     c.Write(b3, 0.0f);
 
