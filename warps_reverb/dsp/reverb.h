@@ -95,6 +95,8 @@ class Reverb {
   float coef_low_cut_hp_;
   float coef_shimmer_;       // shimmer (octave-up) injection amount
   float coef_dry_wet_;
+  float coef_dry_gain_;      // equal-power crossfade pair (sqrt curves)
+  float coef_wet_gain_;
 
   // post-reverb biquad lp on the wet output. cutoff + Q knobs (TIMBRE).
   // direct form I; state per stereo channel

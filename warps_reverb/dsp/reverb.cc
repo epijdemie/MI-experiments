@@ -107,36 +107,39 @@ void Reverb::Tick() {
     coef_feedback_ = d * (2.0f - d);
   }
 
-  // dead-band on dry/wet endpoints. top/bottom 15% of knob travel forced
-  // to pure wet / pure dry. accommodates pot nonlinearity, CV bleed, and
-  // soft-takeover stickiness that can leave 'full CW' at 0.90-0.95
+  // dry/wet with equal-power crossfade (sqrt curves) for responsive
+  // mid-knob feel. plus narrow dead-band on the endpoints (top/bottom 5%)
+  // for guaranteed pure wet/dry zones
   {
     float w = parameters_.dry_wet;
-    if (w < 0.15f) w = 0.0f;
-    else if (w > 0.85f) w = 1.0f;
+    if (w < 0.05f) w = 0.0f;
+    else if (w > 0.95f) w = 1.0f;
     coef_dry_wet_ = w;
+    coef_wet_gain_ = stmlib::Sqrt(w);
+    coef_dry_gain_ = stmlib::Sqrt(1.0f - w);
   }
 
   // low_cut: 1-pole hp in each branch. 5..200 Hz log corner
   const float hp_hz = 5.0f * exp2f(parameters_.low_cut * 5.32f);
   coef_low_cut_hp_  = 2.0f * static_cast<float>(M_PI) * hp_hz / sample_rate_;
 
-  // shimmer scale: squared curve × 0.05 max. recirculation amplifies the
-  // injection 6-7× in steady state (geometric sum at 0.84 loop gain),
-  // so even 0.05 inject → ~0.3 ss level. audible halo, not dominant.
-  // squared curve so the bottom half of the knob is very subtle
+  // shimmer scale: squared curve × 0.1 max. recirculation amplifies the
+  // injection 6-7× in steady state, so ss level ~0.6 input. audible halo.
+  // squared curve keeps lower half of knob subtle
   {
     const float s = parameters_.spectral;
-    coef_shimmer_ = s * s * 0.05f;
+    coef_shimmer_ = s * s * 0.1f;
   }
 
   // post-reverb biquad lp coefficients (RBJ cookbook, direct form I).
-  // cutoff: 100 Hz .. 18 kHz log. Q: 0.5 .. 6 (resonance from flat to ringing)
-  const float fc = 100.0f * exp2f(parameters_.output_cutoff * 7.5f);
+  // cutoff: 250 Hz .. 16 kHz log. Q: 0.5 .. 6 (resonance from flat to ringing)
+  // fc_min lifted from 100 → 250 Hz because (1-cos(ω)) at very low ω loses
+  // single-precision float resolution → biquad doesn't actually attenuate
+  const float fc = 250.0f * exp2f(parameters_.output_cutoff * 6.0f);
   const float q  = 0.5f + parameters_.resonance * 5.5f;
   // safe clamp: stop fc from approaching Nyquist
   float fc_clamped = fc;
-  if (fc_clamped > 18000.0f) fc_clamped = 18000.0f;
+  if (fc_clamped > 16000.0f) fc_clamped = 16000.0f;
   const float omega = 2.0f * static_cast<float>(M_PI) * fc_clamped / sample_rate_;
   const float sw = sinf(omega);
   const float cw = cosf(omega);
@@ -190,7 +193,8 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
   const float kfb       = coef_feedback_;
   const float khp       = coef_low_cut_hp_;
   const float shimmer_amt = coef_shimmer_;
-  const float wet         = coef_dry_wet_;
+  const float dry_gain    = coef_dry_gain_;
+  const float wet_gain    = coef_wet_gain_;
 
   const float size_k = 0.4f + 1.0f * parameters_.size;
   const float tau0 = kBaseDelay0 * size_k;
@@ -369,8 +373,11 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
     const float magm = magl > magr ? magl : magr;
     if (magm > peak_block_) peak_block_ = magm;
 
-    in_out->l = stmlib::Crossfade(in_out->l, final_l, wet);
-    in_out->r = stmlib::Crossfade(in_out->r, final_r, wet);
+    // equal-power mix: both gains pre-computed in Tick via sqrt curves.
+    // 50/50 sits at -3 dB instead of linear's -6 dB → wet feels present
+    // throughout the knob travel, not 'dead until 12 o'clock'
+    in_out->l = in_out->l * dry_gain + final_l * wet_gain;
+    in_out->r = in_out->r * dry_gain + final_r * wet_gain;
     ++in_out;
   }
 
