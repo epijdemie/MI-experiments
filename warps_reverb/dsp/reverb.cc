@@ -21,8 +21,13 @@ constexpr float kBaseDelay3 = 4421.0f;
 
 constexpr float kPreDelayMaxSamples = 2400.0f;  // 50 ms @ 48k
 
-// max delay-line modulation swing in samples. ±240 ≈ ±5 ms at 48k
-constexpr float kMaxModSamples = 240.0f;
+// max chord-spread depth in samples per tank line. ±200 ≈ ±4 ms at 48k.
+// reservation headroom is 240 so this fits with margin
+constexpr float kMaxSpreadDepth = 200.0f;
+
+// 4 incommensurate slow lfo rates (Hz). periods ~5-14 s, mutually prime-ish
+// so lines never align - keeps the spread evolving without re-syncing
+constexpr float kSpreadRateHz[4] = { 0.073f, 0.097f, 0.131f, 0.181f };
 
 // matrix gain compensation. 1.0 lets the loop reach unity gain at decay=1.0
 // (cathedral / freeze territory). smoothsat bounds the loop — it asymptotes
@@ -78,10 +83,12 @@ void Reverb::Init(float* buffer, float sample_rate) {
   std::memset(echo_buffer_, 0, sizeof(echo_buffer_));
   echo_w_ = 0;
 
-  lfo_phase_[0] = 0.0f;
-  lfo_phase_[1] = 1.5707963f;       // quadrature start
-  lfo_phase_inc_[0] = 0.0f;
-  lfo_phase_inc_[1] = 0.0f;
+  // stagger starting phases so lines don't all begin from zero
+  for (int i = 0; i < 4; ++i) {
+    lfo_phase_[i] = static_cast<float>(i) * 1.5707963f;
+    lfo_phase_inc_[i] =
+        2.0f * static_cast<float>(M_PI) * kSpreadRateHz[i] / sample_rate;
+  }
 
   parameters_.decay         = 0.5f;
   parameters_.echo_feedback = 0.0f;
@@ -89,7 +96,7 @@ void Reverb::Init(float* buffer, float sample_rate) {
   parameters_.dry_wet       = 0.5f;
   parameters_.pre_delay     = 0.0f;
   parameters_.diffusion     = 0.5f;
-  parameters_.modulation    = 0.1f;
+  parameters_.spread        = 0.1f;
   parameters_.low_cut       = 0.0f;
 
   Tick();
@@ -109,7 +116,7 @@ void Reverb::Tick() {
     const float d = parameters_.decay;
     coef_feedback_ = d * (2.0f - d);
   }
-  coef_mod_amplitude_      = parameters_.modulation * kMaxModSamples;
+  coef_spread_depth_       = parameters_.spread * kMaxSpreadDepth;
   coef_dry_wet_            = parameters_.dry_wet;
 
   // low_cut: 1-pole hp in each branch. 5..200 Hz log corner.
@@ -120,12 +127,7 @@ void Reverb::Tick() {
   // tape echo feedback. 0 = single pass (no echo), 0.95 = long sustaining loop
   coef_echo_feedback_ = parameters_.echo_feedback * kMaxEchoFeedback;
 
-  // tank-mod lfos. rate climbs with modulation knob: 0.1..1.6 Hz log
-  const float lfo_hz = 0.1f * exp2f(parameters_.modulation * 4.0f);
-  lfo_phase_inc_[0] =
-      2.0f * static_cast<float>(M_PI) * lfo_hz / sample_rate_;
-  lfo_phase_inc_[1] =
-      2.0f * static_cast<float>(M_PI) * lfo_hz * 1.41f / sample_rate_;
+  // lfo rates fixed at construction (kSpreadRateHz). only depth is knob-driven
 
   // matrix locked at full hadamard. partial-α leaves substantial self-coupling
   // on each line which lets it ring at its own modes (karplus-like).
@@ -179,7 +181,7 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
   const float khp       = coef_low_cut_hp_;
   const float kecho     = coef_echo_feedback_;
   const float wet       = coef_dry_wet_;
-  const float ampl      = coef_mod_amplitude_;
+  const float ampl      = coef_spread_depth_;
 
   // tape-echo state pulled into locals
   const int echo_n      = static_cast<int>(kEchoSize);
@@ -206,16 +208,23 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
   int w0 = tank_w_[0], w1 = tank_w_[1], w2 = tank_w_[2], w3 = tank_w_[3];
 
   float lfo_ph0 = lfo_phase_[0], lfo_ph1 = lfo_phase_[1];
+  float lfo_ph2 = lfo_phase_[2], lfo_ph3 = lfo_phase_[3];
   const float lfo_inc0 = lfo_phase_inc_[0];
   const float lfo_inc1 = lfo_phase_inc_[1];
+  const float lfo_inc2 = lfo_phase_inc_[2];
+  const float lfo_inc3 = lfo_phase_inc_[3];
   constexpr float kTwoPi = 2.0f * static_cast<float>(M_PI);
 
   while (size--) {
-    // advance lfos. sinf at 48k×2 ≈ 96k/s — affordable
+    // advance 4 slow lfos. 4 × sinf at 48k = 192k/s ≈ 6% CPU — affordable
     lfo_ph0 += lfo_inc0; if (lfo_ph0 > kTwoPi) lfo_ph0 -= kTwoPi;
     lfo_ph1 += lfo_inc1; if (lfo_ph1 > kTwoPi) lfo_ph1 -= kTwoPi;
+    lfo_ph2 += lfo_inc2; if (lfo_ph2 > kTwoPi) lfo_ph2 -= kTwoPi;
+    lfo_ph3 += lfo_inc3; if (lfo_ph3 > kTwoPi) lfo_ph3 -= kTwoPi;
     const float lfo_v0 = sinf(lfo_ph0);
     const float lfo_v1 = sinf(lfo_ph1);
+    const float lfo_v2 = sinf(lfo_ph2);
+    const float lfo_v3 = sinf(lfo_ph3);
 
     engine_.Start(&c);
 
@@ -254,8 +263,8 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
     // ---- read tank lines (modulated, linear interp) ----
     const float r0 = ReadTankLinear(t0, n0, w0, tau0 + ampl * lfo_v0);
     const float r1 = ReadTankLinear(t1, n1, w1, tau1 + ampl * lfo_v1);
-    const float r2 = ReadTankLinear(t2, n2, w2, tau2 - ampl * lfo_v0);
-    const float r3 = ReadTankLinear(t3, n3, w3, tau3 - ampl * lfo_v1);
+    const float r2 = ReadTankLinear(t2, n2, w2, tau2 + ampl * lfo_v2);
+    const float r3 = ReadTankLinear(t3, n3, w3, tau3 + ampl * lfo_v3);
 
     // ---- per-branch chain: in-loop ap on (wet_in + tank read),
     // then air-absorb lp, then low-cut hp ----
@@ -341,6 +350,8 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
   tank_w_[2] = w2; tank_w_[3] = w3;
   lfo_phase_[0] = lfo_ph0;
   lfo_phase_[1] = lfo_ph1;
+  lfo_phase_[2] = lfo_ph2;
+  lfo_phase_[3] = lfo_ph3;
   echo_w_ = echo_w;
 
   // peak: instant attack, ~150ms release

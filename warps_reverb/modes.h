@@ -3,7 +3,7 @@
 //                unshifted        shifted
 //   ALGORITHM    decay            pre-delay
 //   TIMBRE      echo feedback    diffusion
-//   LEVEL 1     size             modulation
+//   LEVEL 1     size             chord spread
 //   LEVEL 2     mix              low-cut
 
 #ifndef WARPS_REVERB_MODES_H_
@@ -22,7 +22,7 @@ enum ParameterId {
   PARAM_DRY_WET,
   PARAM_PRE_DELAY,
   PARAM_DIFFUSION,
-  PARAM_MODULATION,
+  PARAM_SPREAD,
   PARAM_LOW_CUT,
   PARAM_LAST
 };

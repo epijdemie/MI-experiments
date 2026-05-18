@@ -73,9 +73,10 @@ class Reverb {
   float echo_buffer_[kEchoSize];
   int   echo_w_;
 
-  // own lfos for tank reads (fxengine lfos aren't publicly accessible)
-  float lfo_phase_[2];
-  float lfo_phase_inc_[2];
+  // 4 independent slow lfos for chord-spread (one per tank line).
+  // rates fixed at incommensurate values; depth from spread knob
+  float lfo_phase_[4];
+  float lfo_phase_inc_[4];
 
   // tank buffers - main sram. each modulated, linear-interp read
   float tank_0_[kTankSize0];
@@ -94,7 +95,7 @@ class Reverb {
   float coef_low_cut_hp_;
   float coef_echo_feedback_;
   float coef_dry_wet_;
-  float coef_mod_amplitude_;
+  float coef_spread_depth_;
 
   float sample_rate_;
   float peak_;

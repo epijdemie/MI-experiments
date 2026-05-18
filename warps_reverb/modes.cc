@@ -10,7 +10,7 @@ float* WriteSlot(ReverbParameters* p, ParameterId id) {
     case PARAM_DRY_WET:    return &p->dry_wet;
     case PARAM_PRE_DELAY:  return &p->pre_delay;
     case PARAM_DIFFUSION:  return &p->diffusion;
-    case PARAM_MODULATION: return &p->modulation;
+    case PARAM_SPREAD: return &p->spread;
     case PARAM_LOW_CUT:    return &p->low_cut;
     default:               return &p->decay;
   }
@@ -24,7 +24,7 @@ float ReadSlot(const ReverbParameters& p, ParameterId id) {
     case PARAM_DRY_WET:    return p.dry_wet;
     case PARAM_PRE_DELAY:  return p.pre_delay;
     case PARAM_DIFFUSION:  return p.diffusion;
-    case PARAM_MODULATION: return p.modulation;
+    case PARAM_SPREAD: return p.spread;
     case PARAM_LOW_CUT:    return p.low_cut;
     default:               return 0.0f;
   }
@@ -38,12 +38,12 @@ const PanelConfig kConfig = {
     .dry_wet       = 0.5f,
     .pre_delay     = 0.0f,
     .diffusion     = 0.85f,   // strong in-loop diffusion (kills modal ringing)
-    .modulation    = 0.4f,    // ~2 ms swing - meaningful modal smear
+    .spread        = 0.3f,    // gentle harmonic spread by default
     .low_cut       = 0.3f,    // ~40 Hz hp - kills sub buildup at high decay
   },
   .algorithm = { PARAM_DECAY,         PARAM_PRE_DELAY  },
   .timbre    = { PARAM_ECHO_FEEDBACK, PARAM_DIFFUSION  },
-  .level1    = { PARAM_SIZE,    PARAM_MODULATION },
+  .level1    = { PARAM_SIZE,    PARAM_SPREAD },
   .level2    = { PARAM_DRY_WET, PARAM_LOW_CUT    },
 };
 
