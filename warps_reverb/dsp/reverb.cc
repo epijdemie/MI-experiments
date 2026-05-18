@@ -19,6 +19,10 @@ constexpr float kBaseDelay3 = 4421.0f;
 
 constexpr float kPreDelayMaxSamples = 4800.0f;  // 100ms @ 48k
 
+// max delay-line modulation swing in samples. ±240 ≈ ±5 ms at 48k.
+// reservations must accommodate base * 1.4 + this
+constexpr float kMaxModSamples = 240.0f;
+
 // matrix gain compensation. 0.7 ≈ 1/√2 (peak of hadamard at α=1)
 constexpr float kMatrixComp = 0.7f;
 
@@ -71,7 +75,9 @@ void Reverb::Tick() {
   // the smearing now
   coef_branch_diff_        = 0.5f * parameters_.diffusion;
   coef_feedback_           = parameters_.decay;        // 0..1
-  coef_mod_amplitude_      = parameters_.modulation * 0.6f;
+  // absolute mod swing in samples - independent of delay length so chorusing
+  // sounds consistent across the size knob's range
+  coef_mod_amplitude_      = parameters_.modulation * kMaxModSamples;
   coef_dry_wet_            = parameters_.dry_wet;
 
   // low_cut: 1-pole hp in each branch. 5..200 Hz log corner.
@@ -102,11 +108,13 @@ void Reverb::Tick() {
 
 void Reverb::Process(FloatFrame* in_out, size_t size) {
   // fxengine reservations (samples @ 48k):
-  //   pre_delay         4800   100 ms front-of-chain delay
-  //   input_ap0..3      230,173,613,448   dattorro input diffuser (~28 ms)
-  //   branch_ap0..3     4 × 256           in-loop diffusion
-  //   tank0..3          4 × 6200          fdn delay lines
-  // total: 4800 + 1464 + 1024 + 24800 = 32088 of 32768
+  //   pre_delay         4800           100 ms front-of-chain delay
+  //   input_ap0..3      230,173,613,448  dattorro input diffuser (~28 ms)
+  //   branch_ap0..3     4 × 256        in-loop diffusion
+  //   tank0..3          3200,4250,5350,6450  fdn (per-line max + mod headroom)
+  //   out_ap_l_a/b      230, 560       output diffuser L (~4.8 / 11.7 ms)
+  //   out_ap_r_a/b      320, 480       output diffuser R (~6.7 / 10.0 ms)
+  // total: 4800 + 1464 + 1024 + 19250 + 1590 = 28128 of 32768
   typedef Engine::Reserve<4800,
           Engine::Reserve<230,
           Engine::Reserve<173,
@@ -116,10 +124,15 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
           Engine::Reserve<256,
           Engine::Reserve<256,
           Engine::Reserve<256,
-          Engine::Reserve<6200,
-          Engine::Reserve<6200,
-          Engine::Reserve<6200,
-          Engine::Reserve<6200> > > > > > > > > > > > > Memory;
+          Engine::Reserve<3200,
+          Engine::Reserve<4250,
+          Engine::Reserve<5350,
+          Engine::Reserve<6450,
+          Engine::Reserve<230,
+          Engine::Reserve<560,
+          Engine::Reserve<320,
+          Engine::Reserve<480>
+          > > > > > > > > > > > > > > > > Memory;
   Engine::DelayLine<Memory,  0> pre_delay;
   Engine::DelayLine<Memory,  1> input_ap0;
   Engine::DelayLine<Memory,  2> input_ap1;
@@ -133,6 +146,10 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
   Engine::DelayLine<Memory, 10> del1;
   Engine::DelayLine<Memory, 11> del2;
   Engine::DelayLine<Memory, 12> del3;
+  Engine::DelayLine<Memory, 13> out_ap_l_a;
+  Engine::DelayLine<Memory, 14> out_ap_l_b;
+  Engine::DelayLine<Memory, 15> out_ap_r_a;
+  Engine::DelayLine<Memory, 16> out_ap_r_b;
   Engine::Context c;
 
   const float gain      = coef_input_gain_;
@@ -195,7 +212,7 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
     c.Load(wet_in);
     c.Read(ap0 TAIL, -kap);
     c.WriteAllPass(ap0, kap);
-    c.Interpolate(del0, tau0, LFO_1, ampl * tau0, 1.0f);
+    c.Interpolate(del0, tau0, LFO_1, ampl, 1.0f);
     c.Lp(lp0, kAbsorbCoef);
     c.Write(branch_pre, 0.0f);
     tilt_state_[0] += kTiltCoef * (branch_pre - tilt_state_[0]);
@@ -210,7 +227,7 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
     c.Load(wet_in);
     c.Read(ap1 TAIL, kap);
     c.WriteAllPass(ap1, -kap);
-    c.Interpolate(del1, tau1, LFO_2, ampl * tau1, 1.0f);
+    c.Interpolate(del1, tau1, LFO_2, ampl, 1.0f);
     c.Lp(lp1, kAbsorbCoef);
     c.Write(branch_pre, 0.0f);
     tilt_state_[1] += kTiltCoef * (branch_pre - tilt_state_[1]);
@@ -225,7 +242,7 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
     c.Load(wet_in);
     c.Read(ap2 TAIL, -kap);
     c.WriteAllPass(ap2, kap);
-    c.Interpolate(del2, tau2, LFO_1, -ampl * tau2, 1.0f);
+    c.Interpolate(del2, tau2, LFO_1, -ampl, 1.0f);
     c.Lp(lp2, kAbsorbCoef);
     c.Write(branch_pre, 0.0f);
     tilt_state_[2] += kTiltCoef * (branch_pre - tilt_state_[2]);
@@ -240,7 +257,7 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
     c.Load(wet_in);
     c.Read(ap3 TAIL, kap);
     c.WriteAllPass(ap3, -kap);
-    c.Interpolate(del3, tau3, LFO_2, -ampl * tau3, 1.0f);
+    c.Interpolate(del3, tau3, LFO_2, -ampl, 1.0f);
     c.Lp(lp3, kAbsorbCoef);
     c.Write(branch_pre, 0.0f);
     tilt_state_[3] += kTiltCoef * (branch_pre - tilt_state_[3]);
@@ -267,8 +284,28 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
     c.Write(del3, 0.0f);
 
     // stereo tap: 0+2 -> L, 1+3 -> R
-    const float wet_l = b0 + b2;
-    const float wet_r = b1 + b3;
+    const float tap_l = b0 + b2;
+    const float tap_r = b1 + b3;
+
+    // output diffuser: 2 series APs per channel, fixed small gain
+    constexpr float kOutAp = 0.5f;
+
+    float wet_l, wet_r;
+
+    c.Load(tap_l);
+    c.Read(out_ap_l_a TAIL, -kOutAp);
+    c.WriteAllPass(out_ap_l_a, kOutAp);
+    c.Read(out_ap_l_b TAIL, kOutAp);
+    c.WriteAllPass(out_ap_l_b, -kOutAp);
+    c.Write(wet_l, 0.0f);
+
+    c.Load(tap_r);
+    c.Read(out_ap_r_a TAIL, -kOutAp);
+    c.WriteAllPass(out_ap_r_a, kOutAp);
+    c.Read(out_ap_r_b TAIL, kOutAp);
+    c.WriteAllPass(out_ap_r_b, -kOutAp);
+    c.Write(wet_r, 0.0f);
+
     const float magl = wet_l < 0 ? -wet_l : wet_l;
     const float magr = wet_r < 0 ? -wet_r : wet_r;
     const float magm = magl > magr ? magl : magr;
