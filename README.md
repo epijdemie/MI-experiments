@@ -9,7 +9,6 @@ Personal alt-firmware fork of [Mutable Instruments](https://pichenettes.github.i
 | **Warps** | [`warps_drone/`](warps_drone/) — drone machine: 3-string Karplus chord + modal harmonics + plate reverb + overdrive + vinyl noise | v1.2 stable        |
 | **Warps** | [`warps_reverb/`](warps_reverb/) — clouds-engine FDN reverb on Warps hardware | in progress |
 
-Both target stock Warps hardware (STM32F405, WM8731 codec, no mods).
 
 ## Repo layout
 
