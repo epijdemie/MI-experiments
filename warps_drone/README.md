@@ -14,7 +14,8 @@ a long plate reverb tail, plus an independent K-S **bass** that bypasses the rev
 Latest stable: **v1.2** ([release notes below](#release-notes))
 
 
-[`warps_drones_v1.2.wav`](builds/warps_drones_v1.2.wav) | Hold the button while powering on, play the WAV into IN L from your phone or laptop. ~75 s. The module reflashes itself. |
+[`warps_drones_v1.2.wav`](builds/warps_drones_v1.2.wav) | Hold the button while powering on, play the WAV into IN L from your phone or laptop
+
 [`warps_drones_v1.2.combo.bin`](builds/warps_drones_v1.2.combo.bin) | JTAG-flash at `0x08000000`. Includes Émilie's QPSK WAV bootloader + this firmware
 
 
