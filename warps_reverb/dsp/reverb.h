@@ -1,6 +1,10 @@
-// 4-line fdn reverb on clouds' fxengine. per branch: ap diffuser -> modulated
-// delay -> 1-pole lpf. M(α) cross-couples (α=0 identity -> α=1 hadamard).
-// smooth-saturated feedback path bounds gain at decay=1.0 (no runaway).
+// 4-line fdn reverb. hybrid memory layout for tail quality:
+//   fxengine buffer (float32, 8192 samples = 32 KB) lives in CCM: pre-delay,
+//   input diffuser, in-loop branch APs, output diffuser. dma-isolated +
+//   single-cycle.
+//   fdn tank (4 × float[≈3200..6500] ≈ 76 KB) lives in main SRAM, read with
+//   linear interpolation + own LFOs. float32 storage keeps long tails clean
+//   to the noise floor of the math, not the storage format.
 
 #ifndef WARPS_REVERB_DSP_REVERB_H_
 #define WARPS_REVERB_DSP_REVERB_H_
@@ -30,8 +34,8 @@ class Reverb {
   Reverb() { }
   ~Reverb() { }
 
-  // buffer = kBufferSize × uint16_t in main sram
-  void Init(uint16_t* buffer, float sample_rate);
+  // buffer = kBufferSize × float in CCM (32 KB)
+  void Init(float* buffer, float sample_rate);
 
   void Tick();
   void Process(FloatFrame* in_out, size_t size);
@@ -41,18 +45,39 @@ class Reverb {
   // decayed wet peak. >0.95 = soft-limit clipping warning
   inline float peak() const { return peak_; }
 
-  // fxengine buffer = 64k (32768 × u16). all delay lines must fit
-  static constexpr size_t kBufferSize = 32768;
+  // fxengine buffer = 8192 × float32 = 32 KB in CCM. holds pre-delay (2400)
+  // + input diffuser (1464) + branch APs (1024) + output diffuser (1590)
+  // = 6478 used of 8192
+  static constexpr size_t kBufferSize = 8192;
+
+  // per-line tank delay buffers. sizes = base * 1.4 + 240 mod headroom,
+  // rounded up. these live in main sram (default placement)
+  static constexpr size_t kTankSize0 = 3200;   // line 0 (base 2089)
+  static constexpr size_t kTankSize1 = 4256;   // line 1 (base 2843)
+  static constexpr size_t kTankSize2 = 5344;   // line 2 (base 3617)
+  static constexpr size_t kTankSize3 = 6464;   // line 3 (base 4421)
 
  private:
-  typedef clouds::FxEngine<kBufferSize, clouds::FORMAT_16_BIT> Engine;
+  typedef clouds::FxEngine<kBufferSize, clouds::FORMAT_32_BIT> Engine;
   Engine engine_;
 
   MixingMatrix matrix_;
 
+  // per-branch filter state (small, lives wherever class does)
   float lpf_state_[4];     // air-absorption lp (fixed corner)
   float tilt_state_[4];    // tone-tilt lp/hp split state
   float hpf_state_[4];     // low-cut hp
+
+  // own lfos for tank reads (fxengine lfos aren't publicly accessible)
+  float lfo_phase_[2];
+  float lfo_phase_inc_[2];
+
+  // tank buffers - main sram. each modulated, linear-interp read
+  float tank_0_[kTankSize0];
+  float tank_1_[kTankSize1];
+  float tank_2_[kTankSize2];
+  float tank_3_[kTankSize3];
+  int   tank_w_[4];
 
   // tick -> process cache
   float coef_input_gain_;

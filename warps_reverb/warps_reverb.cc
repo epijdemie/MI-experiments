@@ -11,8 +11,11 @@
 using namespace warps_reverb;
 using namespace stmlib;
 
-// 64k FxEngine buffer in main sram
-uint16_t reverb_buffer[Reverb::kBufferSize];
+// 32k FxEngine buffer in CCM (single-cycle, no dma contention). float32
+// for clean recirculation through the diffusers and saturator.
+// tank delay lines live inside the Reverb class (main sram, also float32).
+float reverb_buffer[Reverb::kBufferSize]
+    __attribute__((section(".ccmdata")));
 
 warps::Codec   codec;
 warps::System  sys;
