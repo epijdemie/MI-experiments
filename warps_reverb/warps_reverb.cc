@@ -69,8 +69,9 @@ void FillBuffer(warps::Codec::Frame* input,
 }
 
 void Init() {
-  // sys.Init(false) - no VTOR offset (link at 0x08000000, no bootloader)
-  sys.Init(false);
+  // sys.Init(true) — VTOR offset to APPLICATION_LARGE (0x08008000).
+  // Émilie's QPSK WAV bootloader lives at 0x08000000 (sectors 0+1).
+  sys.Init(true);
   version.Init();
 
   reverb.Init(reverb_buffer, kSampleRate);

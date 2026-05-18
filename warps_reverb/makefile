@@ -1,18 +1,18 @@
 # warps reverb firmware. stm32f405 @ 168MHz, WM8731. 48k audio.
-# links at 0x08004000 - factory bootloader stays usable for recovery
+# v1.0 layout: app at 0x08008000, Émilie's QPSK WAV bootloader at 0x08000000
+# (sectors 0+1, 32 KB). build the bootloader once via
+#   make -f warps/bootloader/makefile
+# then this makefile produces the app + combo (bootloader + app) for
+# first-time JTAG install, and a wav: target encodes the app for end-user
+# updates through the audio input.
 
-# system specs (mirrors warps/makefile)
 F_CRYSTAL      = 8000000L
 F_CPU          = 168000000L
 SYSCLOCK       = SYSCLK_FREQ_168MHz
 FAMILY         = f4xx
 
-# Link the firmware at 0x08000000 (no bootloader). JTAG-flash directly to that
-# address. To return to factory layout (firmware at 0x08008000 + factory
-# bootloader at 0x08000000), uncomment both APPLICATION_LARGE and BOOTLOADER
-# below.
-# APPLICATION_LARGE = TRUE
-# BOOTLOADER        = warps_bootloader
+APPLICATION_LARGE = TRUE
+BOOTLOADER        = warps_bootloader
 
 UPLOAD_COMMAND  = upload_combo_jtag_erase_first
 
@@ -23,16 +23,18 @@ PACKAGES       = warps_reverb \
 		stmlib/dsp \
 		stmlib/utils \
 		stmlib/system
-# No RESOURCES line - we don't ship generated lookup tables yet
 
 TOOLCHAIN_PATH ?= /usr/local/arm-4.8.3/
 
 include stmlib/makefile.inc
 
-# Quiet modern GCC's complaints about old-style code in MI's bundled CMSIS:
-#   - 'register' keyword (banned in C++17, used by core_cmFunc.h)
-#   - implicit fallthrough, deprecated casts, etc. - add as encountered
+# Quiet modern GCC's complaints about old-style code in MI's bundled CMSIS
 CPPFLAGS += -Wno-register -Wno-deprecated
 
-# JTAG/ST-Link upload is provided by stmlib via UPLOAD_COMMAND above:
-#   make upload   ->   upload_combo_jtag_erase_first rule (erase + write + verify)
+# Encode the app .bin as a QPSK WAV so end users can update via IN L
+# without needing JTAG. Matches Émilie's warps WAV bootloader format
+# (48 kHz / 12 kbps / 6 kHz carrier / 256-byte packets).
+wav: $(TARGET_BIN)
+	PYTHONPATH=. python3 stm_audio_bootloader/qpsk/encoder.py \
+		-t stm32f4 -s 48000 -b 12000 -c 6000 -p 256 \
+		$(TARGET_BIN)
