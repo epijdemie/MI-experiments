@@ -79,6 +79,10 @@ void Reverb::Init(float* buffer, float sample_rate) {
   std::memset(tank_3_, 0, sizeof(tank_3_));
   for (int i = 0; i < 4; ++i) tank_w_[i] = 0;
 
+  std::memset(out_pd_l_, 0, sizeof(out_pd_l_));
+  std::memset(out_pd_r_, 0, sizeof(out_pd_r_));
+  out_pd_w_ = 0;
+
   for (int i = 0; i < 4; ++i) {
     const float omega = 2.0f * static_cast<float>(M_PI)
                       * kSpectralRateHz[i] / sample_rate_;
@@ -214,6 +218,9 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
   float lx1 = bq_l_x1_, lx2 = bq_l_x2_, ly1 = bq_l_y1_, ly2 = bq_l_y2_;
   float rx1 = bq_r_x1_, rx2 = bq_r_x2_, ry1 = bq_r_y1_, ry2 = bq_r_y2_;
 
+  // output pre-delay write pointer
+  int out_pd_w = out_pd_w_;
+
   while (size--) {
     // advance 4 recurrent cos oscs
     const float v0 = oc0 * y1_0 - y2_0; y2_0 = y1_0; y1_0 = v0;
@@ -308,8 +315,17 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
 
     // ---- wet output tap from TANK reads (no direct input bleed) ----
     // r_n contains saturated, decayed, matrix-mixed history. pure tail.
-    const float tap_l = r0 + r2;
-    const float tap_r = r1 + r3;
+    const float raw_tap_l = r0 + r2;
+    const float raw_tap_r = r1 + r3;
+
+    // ---- output pre-delay: shifts ALL wet activity ~40 ms later relative
+    // to the dry, so even the first reflection is clearly past the dry
+    // transient. ring buffer per channel.
+    const float tap_l = out_pd_l_[out_pd_w];
+    const float tap_r = out_pd_r_[out_pd_w];
+    out_pd_l_[out_pd_w] = raw_tap_l;
+    out_pd_r_[out_pd_w] = raw_tap_r;
+    if (++out_pd_w >= kOutputPreDelay) out_pd_w = 0;
 
     // output diffuser
     float diff_l, diff_r;
@@ -366,6 +382,7 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
   osc_y1_[3] = y1_3; osc_y2_[3] = y2_3;
   bq_l_x1_ = lx1; bq_l_x2_ = lx2; bq_l_y1_ = ly1; bq_l_y2_ = ly2;
   bq_r_x1_ = rx1; bq_r_x2_ = rx2; bq_r_y1_ = ry1; bq_r_y2_ = ry2;
+  out_pd_w_ = out_pd_w;
 
   peak_ = peak_block_ > peak_ ? peak_block_ : peak_ * 0.9f;
   peak_block_ = 0.0f;

@@ -81,6 +81,14 @@ class Reverb {
   float tank_3_[kTankSize3];
   int   tank_w_[4];
 
+  // wet-output pre-delay: a small buffer between the tank tap and the output
+  // diffuser. pushes ALL wet activity later so the first reflection lands
+  // clearly past the dry transient (~90 ms vs ~50 ms without)
+  static constexpr int kOutputPreDelay = 1920;   // 40 ms @ 48k
+  float out_pd_l_[kOutputPreDelay];
+  float out_pd_r_[kOutputPreDelay];
+  int   out_pd_w_;
+
   // tick -> process cache
   float coef_input_gain_;
   float coef_pre_delay_samples_;
