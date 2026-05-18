@@ -31,7 +31,10 @@ constexpr float kOutAp = 0.5f;
 // the dry input punching through the tail
 constexpr float kInputDiffA = 0.75f;
 constexpr float kInputDiffB = 0.625f;
-constexpr float kBranchDiff = 0.70f;
+constexpr float kInputDiffC = 0.70f;   // additional input ap pair
+// in-loop ap gain bumped: more dispersion per pass → tank content smears
+// more aggressively each recirculation. helps 'wash' input character
+constexpr float kBranchDiff = 0.78f;
 
 // in-loop absorption LP at fixed bright corner. ~7 kHz @ 48k
 constexpr float kAbsorbFixed = 0.60f;
@@ -117,16 +120,21 @@ void Reverb::Tick() {
     coef_feedback_ = d * (2.0f - d);
   }
 
-  // dry/wet equal-power crossfade. sqrt(0) = 0 and sqrt(1) = 1 naturally —
-  // no dead-bands needed at the endpoints. smooth from full dry through
-  // 50/50 (-3 dB each) to full wet
+  // dry/wet: smoothstep × equal-power. smoothstep w'=w²(3-2w) has zero
+  // derivative at endpoints, so a slight pot offset at full CCW (ADC may
+  // not read exact 0) gives near-silence wet. then sqrt curves preserve
+  // the equal-power feel at mid-knob.
+  // at w=0.05: w'=0.014, wet_gain=0.12 (was 0.22 with pure sqrt → audible bleed)
+  // at w=0.5:  w'=0.5,   wet_gain=0.707 (same as before, -3 dB equal-power)
+  // at w=1:    w'=1,     wet_gain=1
   {
     float w = parameters_.dry_wet;
     if (w < 0.0f) w = 0.0f;
     else if (w > 1.0f) w = 1.0f;
     coef_dry_wet_ = w;
-    coef_wet_gain_ = stmlib::Sqrt(w);
-    coef_dry_gain_ = stmlib::Sqrt(1.0f - w);
+    const float ws = w * w * (3.0f - 2.0f * w);
+    coef_wet_gain_ = stmlib::Sqrt(ws);
+    coef_dry_gain_ = stmlib::Sqrt(1.0f - ws);
   }
 
   // low_cut: 1-pole hp in each branch. 5..200 Hz log corner
@@ -167,13 +175,16 @@ void Reverb::Tick() {
 }
 
 void Reverb::Process(FloatFrame* in_out, size_t size) {
-  // fxengine reservations: pre_delay + input diffuser + branch APs + output APs
-  // total 6478 of 8192
+  // fxengine reservations: pre_delay + EXTENDED input diffuser (6 APs)
+  // + branch APs + output APs. total 6858 of 8192. extra input AP stages
+  // smear the input more before tank injection → 'washed' tail
   typedef Engine::Reserve<2400,
           Engine::Reserve<230,
           Engine::Reserve<173,
           Engine::Reserve<613,
           Engine::Reserve<448,
+          Engine::Reserve<100,
+          Engine::Reserve<280,
           Engine::Reserve<256,
           Engine::Reserve<256,
           Engine::Reserve<256,
@@ -182,20 +193,22 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
           Engine::Reserve<560,
           Engine::Reserve<320,
           Engine::Reserve<480>
-          > > > > > > > > > > > > Memory;
+          > > > > > > > > > > > > > > Memory;
   Engine::DelayLine<Memory,  0> pre_delay;
   Engine::DelayLine<Memory,  1> input_ap0;
   Engine::DelayLine<Memory,  2> input_ap1;
   Engine::DelayLine<Memory,  3> input_ap2;
   Engine::DelayLine<Memory,  4> input_ap3;
-  Engine::DelayLine<Memory,  5> ap0;
-  Engine::DelayLine<Memory,  6> ap1;
-  Engine::DelayLine<Memory,  7> ap2;
-  Engine::DelayLine<Memory,  8> ap3;
-  Engine::DelayLine<Memory,  9> out_ap_l_a;
-  Engine::DelayLine<Memory, 10> out_ap_l_b;
-  Engine::DelayLine<Memory, 11> out_ap_r_a;
-  Engine::DelayLine<Memory, 12> out_ap_r_b;
+  Engine::DelayLine<Memory,  5> input_ap4;
+  Engine::DelayLine<Memory,  6> input_ap5;
+  Engine::DelayLine<Memory,  7> ap0;
+  Engine::DelayLine<Memory,  8> ap1;
+  Engine::DelayLine<Memory,  9> ap2;
+  Engine::DelayLine<Memory, 10> ap3;
+  Engine::DelayLine<Memory, 11> out_ap_l_a;
+  Engine::DelayLine<Memory, 12> out_ap_l_b;
+  Engine::DelayLine<Memory, 13> out_ap_r_a;
+  Engine::DelayLine<Memory, 14> out_ap_r_b;
   Engine::Context c;
 
   const float gain      = coef_input_gain_;
@@ -245,7 +258,9 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
     c.Write(pre_delay, 0.0f);
     c.Interpolate(pre_delay, pre, 1.0f);
 
-    // input diffuser (hardcoded gains)
+    // input diffuser: 6 series APs, alternating signs. smears input over
+    // ~36 ms before tank injection so the tail carries spectral color but
+    // not recognizable transients ('washed' character)
     c.Read(input_ap0 TAIL, -kInputDiffA);
     c.WriteAllPass(input_ap0, kInputDiffA);
     c.Read(input_ap1 TAIL, kInputDiffA);
@@ -254,6 +269,10 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
     c.WriteAllPass(input_ap2, kInputDiffB);
     c.Read(input_ap3 TAIL, kInputDiffB);
     c.WriteAllPass(input_ap3, -kInputDiffB);
+    c.Read(input_ap4 TAIL, -kInputDiffC);
+    c.WriteAllPass(input_ap4, kInputDiffC);
+    c.Read(input_ap5 TAIL, kInputDiffC);
+    c.WriteAllPass(input_ap5, -kInputDiffC);
 
     float wet_in;
     c.Write(wet_in, 0.0f);
