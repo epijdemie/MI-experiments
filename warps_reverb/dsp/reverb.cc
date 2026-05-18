@@ -107,13 +107,13 @@ void Reverb::Tick() {
     coef_feedback_ = d * (2.0f - d);
   }
 
-  // dead-band on dry/wet endpoints so fully CCW = guaranteed pure dry and
-  // fully CW = guaranteed pure wet (no soft-takeover/CV bleed making
-  // 'full wet' actually 95% wet + 5% dry)
+  // dead-band on dry/wet endpoints. top/bottom 15% of knob travel forced
+  // to pure wet / pure dry. accommodates pot nonlinearity, CV bleed, and
+  // soft-takeover stickiness that can leave 'full CW' at 0.90-0.95
   {
     float w = parameters_.dry_wet;
-    if (w < 0.03f) w = 0.0f;
-    else if (w > 0.97f) w = 1.0f;
+    if (w < 0.15f) w = 0.0f;
+    else if (w > 0.85f) w = 1.0f;
     coef_dry_wet_ = w;
   }
 
@@ -121,7 +121,14 @@ void Reverb::Tick() {
   const float hp_hz = 5.0f * exp2f(parameters_.low_cut * 5.32f);
   coef_low_cut_hp_  = 2.0f * static_cast<float>(M_PI) * hp_hz / sample_rate_;
 
-  coef_shimmer_ = parameters_.spectral;
+  // shimmer scale: squared curve × 0.05 max. recirculation amplifies the
+  // injection 6-7× in steady state (geometric sum at 0.84 loop gain),
+  // so even 0.05 inject → ~0.3 ss level. audible halo, not dominant.
+  // squared curve so the bottom half of the knob is very subtle
+  {
+    const float s = parameters_.spectral;
+    coef_shimmer_ = s * s * 0.05f;
+  }
 
   // post-reverb biquad lp coefficients (RBJ cookbook, direct form I).
   // cutoff: 100 Hz .. 18 kHz log. Q: 0.5 .. 6 (resonance from flat to ringing)
