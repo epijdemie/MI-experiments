@@ -96,7 +96,9 @@ void Reverb::Tick() {
   coef_pre_delay_samples_  = parameters_.pre_delay * kPreDelayMaxSamples;
   coef_input_diff_a_       = 0.75f  * parameters_.diffusion;
   coef_input_diff_b_       = 0.625f * parameters_.diffusion;
-  coef_branch_diff_        = 0.5f * parameters_.diffusion;
+  // in-loop ap is the ONLY diffuser inside the feedback loop - has to break
+  // up each tank line's modal resonances. higher gain (Schroeder-classic 0.7)
+  coef_branch_diff_        = 0.7f * parameters_.diffusion;
   // decay knob: x*(2-x) curve so middle position already gives long tail.
   // 0.0→0, 0.5→0.75, 0.75→0.94, 1.0→1.0. saturator catches overshoot at top
   {
@@ -129,8 +131,10 @@ void Reverb::Tick() {
   lfo_phase_inc_[1] =
       2.0f * static_cast<float>(M_PI) * lfo_hz * 1.41f / sample_rate_;
 
-  // matrix alpha tracks size knob: identity (small) -> hadamard (cathedral)
-  matrix_.set_alpha(parameters_.size);
+  // matrix locked at full hadamard. partial-α leaves substantial self-coupling
+  // on each line which lets it ring at its own modes (karplus-like).
+  // size knob purely scales delay lengths now
+  matrix_.set_alpha(1.0f);
 }
 
 void Reverb::Process(FloatFrame* in_out, size_t size) {
@@ -238,17 +242,19 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
     const float r2 = ReadTankLinear(t2, n2, w2, tau2 - ampl * lfo_v0);
     const float r3 = ReadTankLinear(t3, n3, w3, tau3 - ampl * lfo_v1);
 
-    // ---- per-branch chain: in-loop ap -> + tank read -> absorb lp -> tilt -> hp
+    // ---- per-branch chain ----
+    // critical: ap operates on (wet_in + tank read), INSIDE the feedback loop.
+    // putting ap only on wet_in (the old shape) leaves the recirculating tank
+    // content undiffused — each line keeps its own modal pitches → karplus
+    // sound. with ap in-loop, the modes break up each pass.
+    //   load(wet_in + r_n) → ap → absorb-lp → tilt eq → low-cut hp → b_n
     float branch_pre;
     float b0, b1, b2, b3;
 
     // branch 0
-    c.Load(wet_in);
+    c.Load(wet_in + r0);
     c.Read(ap0 TAIL, -kap);
     c.WriteAllPass(ap0, kap);
-    float ap_out;
-    c.Write(ap_out, 0.0f);
-    c.Load(ap_out + r0);
     c.Lp(lp0, kAbsorbCoef);
     c.Write(branch_pre, 0.0f);
     tilt_state_[0] += kTiltCoef * (branch_pre - tilt_state_[0]);
@@ -261,11 +267,9 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
     c.Write(b0, 0.0f);
 
     // branch 1
-    c.Load(wet_in);
+    c.Load(wet_in + r1);
     c.Read(ap1 TAIL, kap);
     c.WriteAllPass(ap1, -kap);
-    c.Write(ap_out, 0.0f);
-    c.Load(ap_out + r1);
     c.Lp(lp1, kAbsorbCoef);
     c.Write(branch_pre, 0.0f);
     tilt_state_[1] += kTiltCoef * (branch_pre - tilt_state_[1]);
@@ -278,11 +282,9 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
     c.Write(b1, 0.0f);
 
     // branch 2
-    c.Load(wet_in);
+    c.Load(wet_in + r2);
     c.Read(ap2 TAIL, -kap);
     c.WriteAllPass(ap2, kap);
-    c.Write(ap_out, 0.0f);
-    c.Load(ap_out + r2);
     c.Lp(lp2, kAbsorbCoef);
     c.Write(branch_pre, 0.0f);
     tilt_state_[2] += kTiltCoef * (branch_pre - tilt_state_[2]);
@@ -295,11 +297,9 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
     c.Write(b2, 0.0f);
 
     // branch 3
-    c.Load(wet_in);
+    c.Load(wet_in + r3);
     c.Read(ap3 TAIL, kap);
     c.WriteAllPass(ap3, -kap);
-    c.Write(ap_out, 0.0f);
-    c.Load(ap_out + r3);
     c.Lp(lp3, kAbsorbCoef);
     c.Write(branch_pre, 0.0f);
     tilt_state_[3] += kTiltCoef * (branch_pre - tilt_state_[3]);

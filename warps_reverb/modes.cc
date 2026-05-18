@@ -37,8 +37,8 @@ const PanelConfig kConfig = {
     .size       = 0.85f,    // mostly-hadamard matrix - smooth wash, not combs
     .dry_wet    = 0.5f,
     .pre_delay  = 0.0f,
-    .diffusion  = 0.6f,     // more smear by default
-    .modulation = 0.25f,    // ~1.25 ms swing - audible chorusing
+    .diffusion  = 0.85f,    // strong in-loop diffusion (kills modal ringing)
+    .modulation = 0.4f,     // ~2 ms swing - meaningful modal smear
     .low_cut    = 0.3f,     // ~40 Hz hp - kills sub buildup at high decay
   },
   .algorithm = { PARAM_DECAY,   PARAM_PRE_DELAY  },
