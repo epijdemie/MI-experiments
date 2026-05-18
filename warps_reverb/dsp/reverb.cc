@@ -116,23 +116,30 @@ void Reverb::Tick() {
   coef_pre_delay_samples_  = parameters_.pre_delay * kPreDelayMaxSamples;
 
   // decay knob: two halves with distinct characters.
-  // CCW half (0..0.5): loop gain held at 0.75 (medium tail). tremolo on
-  //   wet adds rhythmic chopping. rate + depth scale up as you go CCW.
-  // CW half  (0.5..1): loop gain ramps 0.75 → 1.0 (long → freeze). no tremolo.
+  // CCW half (0..0.5): loop gain held at 0.75. stereo ping-pong tremolo
+  //   amount (depth) scales 0..0.7 as you go further CCW → wider stereo
+  //   movement on the wet.
+  // CW half  (0.5..1): loop gain ramps 0.75 → 1.0 (long → freeze). depth 0.
   {
     const float d = parameters_.decay;
     if (d < 0.5f) {
       coef_feedback_ = 0.75f;
       const float t = 1.0f - d * 2.0f;                 // 0 at 0.5, 1 at 0
-      const float rate_hz = 1.0f + t * 9.0f;           // 1..10 Hz
-      coef_tremolo_inc_   = rate_hz / sample_rate_;
       coef_tremolo_depth_ = t * 0.7f;
     } else {
       const float u = (d - 0.5f) * 2.0f;
       coef_feedback_ = 0.75f + 0.25f * u * (2.0f - u);
-      coef_tremolo_inc_   = 0.0f;
       coef_tremolo_depth_ = 0.0f;
     }
+  }
+
+  // tremolo rate from PRE-DELAY knob (shifted ALGORITHM). log mapping
+  // 10 Hz (no pre-delay → fast/snappy) down to 0.5 Hz (max pre-delay →
+  // slow swell). same knob still controls actual pre-delay; both move
+  // together because longer 'space' → slower 'rhythm'
+  {
+    const float rate_hz = 10.0f * exp2f(-parameters_.pre_delay * 4.32f);
+    coef_tremolo_inc_ = rate_hz / sample_rate_;
   }
 
   // dry/wet: smoothstep × equal-power. smoothstep w'=w²(3-2w) has zero
@@ -423,16 +430,25 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
     if (!std::isfinite(final_l)) final_l = 0.0f;
     if (!std::isfinite(final_r)) final_r = 0.0f;
 
-    // tremolo on wet (CCW-decay character). triangle LFO, cheap (no sinf).
-    // at depth=0 (decay ≥ 0.5) this is a 1.0 multiply, no audible effect
+    // stereo ping-pong tremolo on wet. L and R use opposite-phase triangle
+    // LFOs (R = -L_lfo, exact 180° offset). when L peaks, R is at trough →
+    // autopan/ping-pong effect. depth controls width (0 = mono, 0.7 = wide).
+    // at depth=0 (decay ≥ 0.5) this is a 1.0 multiply on both channels.
     trem_phase += trem_inc;
     if (trem_phase >= 1.0f) trem_phase -= 1.0f;
-    float trem_t = 2.0f * trem_phase - 1.0f;
-    if (trem_t < 0.0f) trem_t = -trem_t;
-    const float tri = 1.0f - 2.0f * trem_t;  // -1..1, triangle
-    const float trem_amp = 1.0f - trem_depth * 0.5f * (1.0f - tri);
-    final_l *= trem_amp;
-    final_r *= trem_amp;
+
+    // triangle peaking at phase=0, troughing at phase=0.5:
+    // L_lfo = 4·|phase - 0.5| - 1, range [-1, 1]
+    float t = trem_phase - 0.5f;
+    if (t < 0.0f) t = -t;
+    const float l_lfo = 4.0f * t - 1.0f;
+    const float r_lfo = -l_lfo;   // 180° offset (triangle has this symmetry)
+
+    const float l_amp = 1.0f - trem_depth * 0.5f * (1.0f - l_lfo);
+    const float r_amp = 1.0f - trem_depth * 0.5f * (1.0f - r_lfo);
+
+    final_l *= l_amp;
+    final_r *= r_amp;
 
     const float magl = final_l < 0 ? -final_l : final_l;
     const float magr = final_r < 0 ? -final_r : final_r;
