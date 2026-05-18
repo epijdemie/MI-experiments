@@ -1,50 +1,35 @@
-Mutable Instruments' Eurorack Modules.
+# Mutable Mutations
 
-* [Blades](http://mutable-instruments.net/modules/blades): Dual multimode filter.
-* [Blinds](http://mutable-instruments.net/modules/blinds): Quad VC-polarizer.
-* [Braids](http://mutable-instruments.net/modules/braids): Macro-oscillator.
-* [Branches](http://mutable-instruments.net/modules/branches): Dual Bernoulli gate.
-* [Clouds](http://mutable-instruments.net/modules/clouds): Texture synthesizer.
-* [Ears](http://mutable-instruments.net/modules/ears): Contact microphone.
-* [Edges](http://mutable-instruments.net/modules/edges): Quad chiptune digital oscillator.
-* [Elements](http://mutable-instruments.net/modules/elements): Modal synthesizer.
-* [Frames](http://mutable-instruments.net/modules/frames): Keyframer/mixer.
-* [Grids](http://mutable-instruments.net/modules/grids): Topographic drum sequencer.
-* [Kinks](http://mutable-instruments.net/modules/kinks): Utility module - rectifier, analog logic, S&H, noise.
-* [Links](http://mutable-instruments.net/modules/links): Utility module - buffer, mixer.
-* [Marbles](http://mutable-instruments.net/modules/marbles): Random sampler.
-* [Peaks](http://mutable-instruments.net/modules/peaks): Dual trigger converter.
-* [Plaits](http://mutable-instruments.net/modules/plaits): Macro oscillator.
-* [Rings](http://mutable-instruments.net/modules/rings): Resonator.
-* [Ripples](http://mutable-instruments.net/modules/ripples): Liquid 2-pole BP, 2-pole LP and 4-pole LP filter.
-* [Shades](http://mutable-instruments.net/modules/shades): Triple attenuverter.
-* [Shelves](http://mutable-instruments.net/modules/shelves): EQ filter.
-* [Stages](http://mutable-instruments.net/modules/stages): Segment generator.
-* [Streams](http://mutable-instruments.net/modules/streams): Dual dynamics gate.
-* [Tides](http://mutable-instruments.net/modules/tides): Tidal modulator.
-* [Veils](http://mutable-instruments.net/modules/veils): Quad VCA.
-* [Volts](http://mutable-instruments.net/modules/volts): +5V power module.
-* [Warps](http://mutable-instruments.net/modules/warps): Meta-modulator.
-* [Yarns](http://mutable-instruments.net/modules/yarns): MIDI interface.
+Personal alt-firmware fork of [Mutable Instruments](https://pichenettes.github.io/mutable-instruments-documentation/) Eurorack modules. Focused on full firmware replacements rather than mods.
 
-License
-=======
+## Active projects
 
-Code (AVR projects): GPL3.0.
+| Module    | Replacement firmware                            | Status             |
+|-----------|-------------------------------------------------|--------------------|
+| **Warps** | [`warps_drone/`](warps_drone/) — drone machine: 3-string Karplus chord + modal harmonics + plate reverb + overdrive + vinyl noise | v1.2 stable        |
+| **Warps** | [`warps_reverb/`](warps_reverb/) — clouds-engine FDN reverb on Warps hardware | in progress |
 
-Code (STM32F projects): MIT license.
+Both target stock Warps hardware (STM32F405, WM8731 codec, no mods).
 
-Hardware: cc-by-sa-3.0
+## Repo layout
 
-By: Emilie Gillet (emilie.o.gillet@gmail.com)
+Only what's actively touched or required to compile is tracked:
 
-Guidelines for derivative works
-===============================
+- `warps_drone/`, `warps_reverb/` — the projects
+- `warps/drivers/`, `warps/bootloader/`, `warps/meter.h` — hardware drivers + Émilie's QPSK WAV bootloader
+- `stmlib/` (submodule), `stm_audio_bootloader/` (submodule) — shared STM32 support
+- `clouds/dsp/fx/fx_engine.h` — single header used by `warps_reverb`
 
-**Mutable Instruments is a registered trademark.**
+Everything else from the upstream fork (other modules, AVR toolchain) is git-ignored locally. To start working on one: `git add -f <dir>` and remove the entry from `.gitignore`.
 
-The name "Mutable Instruments" should not be used on any of the derivative works you create from these files.
+## License
 
-We do not recommend you to keep the original name of the Mutable Instruments module for your derivative works.
+Code (STM32F projects): MIT.
 
-For example, your 5U adaptation of Mutable Instruments Clouds can be called "Foobar Modular - Particle Generator".
+Hardware (when relevant): cc-by-sa-3.0.
+
+Upstream code and design by Émilie Gillet (emilie.o.gillet@gmail.com).
+
+## Derivative-works notice
+
+Per the upstream guideline: **"Mutable Instruments" is a registered trademark and must not be used in derivative works.** This fork is named *Mutable Mutations* (the alt-firmware project), and each module's replacement firmware uses a distinct name (`warps_drone`, `warps_reverb`) to avoid confusion with the stock Warps firmware.
