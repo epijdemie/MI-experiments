@@ -66,13 +66,12 @@ class Reverb {
   float lpf_state_[4];     // air-absorption lp (modulated by spectral lfos)
   float hpf_state_[4];     // low-cut hp
 
-  // 4 recurrent cosine oscillators (Goertzel-style, no sinf at runtime).
-  // y[n] = c * y[n-1] - y[n-2] where c = 2*cos(2π*rate/fs)
-  // ONE mul + ONE sub per sample per oscillator. fixed slow rates,
-  // incommensurate so the lines never re-sync
-  float osc_y1_[4];
-  float osc_y2_[4];
-  float osc_c_[4];
+  // shimmer pitch shifter (octave up). reads tank_3 at varying delay with
+  // two grain heads offset by half-grain, triangle-windowed crossfade.
+  // injected into all 4 tank writes → builds rising octave halo over the
+  // tail. cost: ONE shifter, no sinf (triangle window is abs+mul)
+  static constexpr int kShimmerGrain = 2048;     // 43 ms grain @ 48k
+  float shimmer_phase_;
 
   // tank buffers - main sram
   float tank_0_[kTankSize0];
@@ -94,7 +93,7 @@ class Reverb {
   float coef_pre_delay_samples_;
   float coef_feedback_;
   float coef_low_cut_hp_;
-  float coef_spectral_;      // in-loop lp modulation depth (tiny range)
+  float coef_shimmer_;       // shimmer (octave-up) injection amount
   float coef_dry_wet_;
 
   // post-reverb biquad lp on the wet output. cutoff + Q knobs (TIMBRE).

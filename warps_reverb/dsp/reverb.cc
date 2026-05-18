@@ -33,17 +33,12 @@ constexpr float kInputDiffA = 0.75f;
 constexpr float kInputDiffB = 0.625f;
 constexpr float kBranchDiff = 0.70f;
 
-// in-loop absorption LP at fixed bright corner. spectral modulation no
-// longer touches this — APs are modulated instead so the tail can't be
-// damped down by the spectral knob
+// in-loop absorption LP at fixed bright corner. ~7 kHz @ 48k
 constexpr float kAbsorbFixed = 0.60f;
-// spectral modulates branch-AP gain ± this. ap preserves magnitude (only
-// phase changes), so this is frequency-domain peak/notch movement, NOT
-// damping. tail length unaffected at any spectral position
-constexpr float kMaxSpectral = 0.18f;
 
-// spectral oscillator rates (Hz). slow + mutually incommensurate
-constexpr float kSpectralRateHz[4] = { 0.073f, 0.097f, 0.131f, 0.181f };
+// shimmer grain length as float (matches Reverb::kShimmerGrain = 2048)
+constexpr float kShimmerGrainF     = 2048.0f;
+constexpr float kShimmerGrainHalfF = 1024.0f;
 
 // smooth sat: y = x / ⁴√(1 + x⁴)
 inline float SmoothSat(float x) {
@@ -83,14 +78,7 @@ void Reverb::Init(float* buffer, float sample_rate) {
   std::memset(out_pd_r_, 0, sizeof(out_pd_r_));
   out_pd_w_ = 0;
 
-  for (int i = 0; i < 4; ++i) {
-    const float omega = 2.0f * static_cast<float>(M_PI)
-                      * kSpectralRateHz[i] / sample_rate_;
-    osc_c_[i] = 2.0f * cosf(omega);
-    const float phase = static_cast<float>(i) * 0.78539816f;
-    osc_y1_[i] = cosf(phase);
-    osc_y2_[i] = cosf(phase - omega);
-  }
+  shimmer_phase_ = kShimmerGrainF;
 
   // biquad state cleared
   bq_b0_ = bq_b1_ = bq_b2_ = bq_a1_ = bq_a2_ = 0.0f;
@@ -119,13 +107,21 @@ void Reverb::Tick() {
     coef_feedback_ = d * (2.0f - d);
   }
 
-  coef_dry_wet_ = parameters_.dry_wet;
+  // dead-band on dry/wet endpoints so fully CCW = guaranteed pure dry and
+  // fully CW = guaranteed pure wet (no soft-takeover/CV bleed making
+  // 'full wet' actually 95% wet + 5% dry)
+  {
+    float w = parameters_.dry_wet;
+    if (w < 0.03f) w = 0.0f;
+    else if (w > 0.97f) w = 1.0f;
+    coef_dry_wet_ = w;
+  }
 
   // low_cut: 1-pole hp in each branch. 5..200 Hz log corner
   const float hp_hz = 5.0f * exp2f(parameters_.low_cut * 5.32f);
   coef_low_cut_hp_  = 2.0f * static_cast<float>(M_PI) * hp_hz / sample_rate_;
 
-  coef_spectral_ = kMaxSpectral * parameters_.spectral;
+  coef_shimmer_ = parameters_.spectral;
 
   // post-reverb biquad lp coefficients (RBJ cookbook, direct form I).
   // cutoff: 100 Hz .. 18 kHz log. Q: 0.5 .. 6 (resonance from flat to ringing)
@@ -186,8 +182,8 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
   const float pre       = coef_pre_delay_samples_;
   const float kfb       = coef_feedback_;
   const float khp       = coef_low_cut_hp_;
-  const float spectral  = coef_spectral_;
-  const float wet       = coef_dry_wet_;
+  const float shimmer_amt = coef_shimmer_;
+  const float wet         = coef_dry_wet_;
 
   const float size_k = 0.4f + 1.0f * parameters_.size;
   const float tau0 = kBaseDelay0 * size_k;
@@ -206,10 +202,7 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
   float* const t3 = tank_3_;  const int n3 = static_cast<int>(kTankSize3);
   int w0 = tank_w_[0], w1 = tank_w_[1], w2 = tank_w_[2], w3 = tank_w_[3];
 
-  float y1_0 = osc_y1_[0], y2_0 = osc_y2_[0]; const float oc0 = osc_c_[0];
-  float y1_1 = osc_y1_[1], y2_1 = osc_y2_[1]; const float oc1 = osc_c_[1];
-  float y1_2 = osc_y1_[2], y2_2 = osc_y2_[2]; const float oc2 = osc_c_[2];
-  float y1_3 = osc_y1_[3], y2_3 = osc_y2_[3]; const float oc3 = osc_c_[3];
+  float shimmer_phase = shimmer_phase_;
 
   // biquad coefficients (constant for the block, computed in Tick)
   const float bb0 = bq_b0_, bb1 = bq_b1_, bb2 = bq_b2_;
@@ -222,26 +215,6 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
   int out_pd_w = out_pd_w_;
 
   while (size--) {
-    // advance 4 recurrent cos oscs
-    const float v0 = oc0 * y1_0 - y2_0; y2_0 = y1_0; y1_0 = v0;
-    const float v1 = oc1 * y1_1 - y2_1; y2_1 = y1_1; y1_1 = v1;
-    const float v2 = oc2 * y1_2 - y2_2; y2_2 = y1_2; y1_2 = v2;
-    const float v3 = oc3 * y1_3 - y2_3; y2_3 = y1_3; y1_3 = v3;
-
-    // per-branch in-loop AP gain - magnitude-preserving modulation.
-    // each line's AP gain shifts independently around kBranchDiff →
-    // phase response varies → peaks/notches in the recirculating spectrum
-    // wander, without losing any energy. tail stays full length
-    float ap_g0 = kBranchDiff + spectral * v0;
-    float ap_g1 = kBranchDiff + spectral * v1;
-    float ap_g2 = kBranchDiff + spectral * v2;
-    float ap_g3 = kBranchDiff + spectral * v3;
-    // clamp to safe AP gain range (must stay < 1 for stability)
-    if (ap_g0 < 0.30f) ap_g0 = 0.30f; else if (ap_g0 > 0.88f) ap_g0 = 0.88f;
-    if (ap_g1 < 0.30f) ap_g1 = 0.30f; else if (ap_g1 > 0.88f) ap_g1 = 0.88f;
-    if (ap_g2 < 0.30f) ap_g2 = 0.30f; else if (ap_g2 > 0.88f) ap_g2 = 0.88f;
-    if (ap_g3 < 0.30f) ap_g3 = 0.30f; else if (ap_g3 > 0.88f) ap_g3 = 0.88f;
-
     engine_.Start(&c);
 
     // pre-delay
@@ -272,29 +245,29 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
     float b0, b1, b2, b3;
 
     c.Load(wet_in + r0);
-    c.Read(ap0 TAIL, -ap_g0);
-    c.WriteAllPass(ap0, ap_g0);
+    c.Read(ap0 TAIL, -kBranchDiff);
+    c.WriteAllPass(ap0, kBranchDiff);
     c.Lp(lp0, kAbsorbFixed);
     c.Hp(hp0, khp);
     c.Write(b0, 0.0f);
 
     c.Load(wet_in + r1);
-    c.Read(ap1 TAIL, ap_g1);
-    c.WriteAllPass(ap1, -ap_g1);
+    c.Read(ap1 TAIL, kBranchDiff);
+    c.WriteAllPass(ap1, -kBranchDiff);
     c.Lp(lp1, kAbsorbFixed);
     c.Hp(hp1, khp);
     c.Write(b1, 0.0f);
 
     c.Load(wet_in + r2);
-    c.Read(ap2 TAIL, -ap_g2);
-    c.WriteAllPass(ap2, ap_g2);
+    c.Read(ap2 TAIL, -kBranchDiff);
+    c.WriteAllPass(ap2, kBranchDiff);
     c.Lp(lp2, kAbsorbFixed);
     c.Hp(hp2, khp);
     c.Write(b2, 0.0f);
 
     c.Load(wet_in + r3);
-    c.Read(ap3 TAIL, ap_g3);
-    c.WriteAllPass(ap3, -ap_g3);
+    c.Read(ap3 TAIL, kBranchDiff);
+    c.WriteAllPass(ap3, -kBranchDiff);
     c.Lp(lp3, kAbsorbFixed);
     c.Hp(hp3, khp);
     c.Write(b3, 0.0f);
@@ -304,10 +277,34 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
     float mixed[4];
     matrix_.Apply(branch_in, mixed);
 
-    t0[w0] = SmoothSat(mixed[0] * kfb * kMatrixComp);
-    t1[w1] = SmoothSat(mixed[1] * kfb * kMatrixComp);
-    t2[w2] = SmoothSat(mixed[2] * kfb * kMatrixComp);
-    t3[w3] = SmoothSat(mixed[3] * kfb * kMatrixComp);
+    // ---- shimmer (octave-up grain reader from tank_3) ----
+    // two grain heads offset by kShimmerGrain/2, triangle-windowed crossfade.
+    // pair sums to 1 at any offset, so output magnitude ≈ grain magnitude.
+    // shifted content injected into all 4 tank writes → builds rising halo
+    // through the loop's LP + saturator (bounded, doesn't run away ultrasonic)
+    const float sp1 = shimmer_phase;
+    float sp2 = sp1 + kShimmerGrainHalfF;
+    if (sp2 >= kShimmerGrainF) sp2 -= kShimmerGrainF;
+
+    const float sg1 = ReadTankLinear(t3, n3, w3, sp1);
+    const float sg2 = ReadTankLinear(t3, n3, w3, sp2);
+
+    // triangle window (no sinf): w(x) = 1 - |2x - 1|, x ∈ [0, 1]
+    const float sn1 = sp1 * (1.0f / kShimmerGrainF);
+    const float sn2 = sp2 * (1.0f / kShimmerGrainF);
+    float sw1 = 2.0f * sn1 - 1.0f; if (sw1 < 0.0f) sw1 = -sw1; sw1 = 1.0f - sw1;
+    float sw2 = 2.0f * sn2 - 1.0f; if (sw2 < 0.0f) sw2 = -sw2; sw2 = 1.0f - sw2;
+
+    const float shimmer = (sg1 * sw1 + sg2 * sw2) * shimmer_amt;
+
+    // delay shrinks by 1 per sample → octave up (read advances at 2× write)
+    shimmer_phase -= 1.0f;
+    if (shimmer_phase < 0.0f) shimmer_phase += kShimmerGrainF;
+
+    t0[w0] = SmoothSat(mixed[0] * kfb * kMatrixComp + shimmer);
+    t1[w1] = SmoothSat(mixed[1] * kfb * kMatrixComp + shimmer);
+    t2[w2] = SmoothSat(mixed[2] * kfb * kMatrixComp + shimmer);
+    t3[w3] = SmoothSat(mixed[3] * kfb * kMatrixComp + shimmer);
     if (++w0 >= n0) w0 = 0;
     if (++w1 >= n1) w1 = 0;
     if (++w2 >= n2) w2 = 0;
@@ -376,10 +373,7 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
   hpf_state_[2] = hp2; hpf_state_[3] = hp3;
   tank_w_[0] = w0; tank_w_[1] = w1;
   tank_w_[2] = w2; tank_w_[3] = w3;
-  osc_y1_[0] = y1_0; osc_y2_[0] = y2_0;
-  osc_y1_[1] = y1_1; osc_y2_[1] = y2_1;
-  osc_y1_[2] = y1_2; osc_y2_[2] = y2_2;
-  osc_y1_[3] = y1_3; osc_y2_[3] = y2_3;
+  shimmer_phase_ = shimmer_phase;
   bq_l_x1_ = lx1; bq_l_x2_ = lx2; bq_l_y1_ = ly1; bq_l_y2_ = ly2;
   bq_r_x1_ = rx1; bq_r_x2_ = rx2; bq_r_y1_ = ry1; bq_r_y2_ = ry2;
   out_pd_w_ = out_pd_w;
