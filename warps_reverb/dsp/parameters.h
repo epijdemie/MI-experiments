@@ -9,19 +9,18 @@ namespace warps_reverb {
 
 struct ReverbParameters {
   // performance layer
-  float decay;          // fb gain. 1.0 = freeze. saturator catches overshoot
-  float echo_feedback;  // tape-echo feedback BEFORE the reverb (0..0.95).
-                        // each repeat gets washed by the reverb → evolving
-                        // wave patterns. 0 = no echo, 1 = long sustaining loop
-  float size;           // delay scale (matrix locked at full hadamard)
-  float dry_wet;        // mix
+  float decay;        // fb gain. 1.0 = freeze. saturator catches overshoot
+  float diffusion;    // input/output ap gain - echo→smear
+  float size;         // tank delay scaling (matrix locked at full hadamard)
+  float dry_wet;      // mix
 
   // sculpt layer (shifted)
   float pre_delay;    // 0..50ms front-of-chain delay
-  float echo_time;    // tape echo delay length, ~30..200ms
-  float spread;       // chord harmonics intensity. 4 granular pitch shifters
-                      // (3rd / 5th / 7th / 9th up) read from echo buffer,
-                      // sum into wet_in. 0 = off, 1 = full chord stack
+  float damping;      // tail brightness - per-branch lp corner
+  float spectral;     // spectral dynamics depth. 4 slow cos oscillators at
+                      // incommensurate rates modulate per-branch lp cutoff
+                      // → tail spectrum breathes/evolves over many seconds
+                      // without pitch movement
   float low_cut;      // hp corner in fb path (kills sub buildup)
 };
 

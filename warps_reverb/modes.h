@@ -2,9 +2,9 @@
 //
 //                unshifted        shifted
 //   ALGORITHM    decay            pre-delay
-//   TIMBRE      echo feedback    echo time
-//   LEVEL 1     size             chord harmonics
-//   LEVEL 2     mix              low-cut
+//   TIMBRE       diffusion        damping
+//   LEVEL 1      size             spectral
+//   LEVEL 2      mix              low-cut
 
 #ifndef WARPS_REVERB_MODES_H_
 #define WARPS_REVERB_MODES_H_
@@ -17,12 +17,12 @@ namespace warps_reverb {
 
 enum ParameterId {
   PARAM_DECAY,
-  PARAM_ECHO_FEEDBACK,
+  PARAM_DIFFUSION,
   PARAM_SIZE,
   PARAM_DRY_WET,
   PARAM_PRE_DELAY,
-  PARAM_ECHO_TIME,
-  PARAM_SPREAD,
+  PARAM_DAMPING,
+  PARAM_SPECTRAL,
   PARAM_LOW_CUT,
   PARAM_LAST
 };

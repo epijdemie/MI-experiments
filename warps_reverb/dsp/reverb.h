@@ -1,10 +1,13 @@
 // 4-line fdn reverb. hybrid memory layout for tail quality:
-//   fxengine buffer (float32, 8192 samples = 32 KB) lives in CCM: pre-delay,
+//   fxengine buffer (float32, 8192 samples = 32 KB) in CCM: pre-delay,
 //   input diffuser, in-loop branch APs, output diffuser. dma-isolated +
 //   single-cycle.
-//   fdn tank (4 × float[≈3200..6500] ≈ 76 KB) lives in main SRAM, read with
-//   linear interpolation + own LFOs. float32 storage keeps long tails clean
-//   to the noise floor of the math, not the storage format.
+//   fdn tank (4 × float[≈3200..6500] ≈ 76 KB) in main SRAM, linear-interp
+//   reads. float32 keeps long tails clean to the math noise floor.
+//
+// spectral dynamics: 4 cheap recurrent cos oscillators at incommensurate
+// slow rates modulate each branch's air-absorption LP cutoff. tail spectrum
+// breathes/evolves over many seconds with no pitch movement, no sinf cost.
 
 #ifndef WARPS_REVERB_DSP_REVERB_H_
 #define WARPS_REVERB_DSP_REVERB_H_
@@ -45,17 +48,13 @@ class Reverb {
   // decayed wet peak. >0.95 = soft-limit clipping warning
   inline float peak() const { return peak_; }
 
-  // fxengine buffer = 8192 × float32 = 32 KB in CCM. holds pre-delay (2400)
-  // + input diffuser (1464) + branch APs (1024) + output diffuser (1590)
-  // = 6478 used of 8192
   static constexpr size_t kBufferSize = 8192;
 
-  // per-line tank delay buffers. sizes = base * 1.4 + 240 mod headroom,
-  // rounded up. these live in main sram (default placement)
-  static constexpr size_t kTankSize0 = 3200;   // line 0 (base 2089)
-  static constexpr size_t kTankSize1 = 4256;   // line 1 (base 2843)
-  static constexpr size_t kTankSize2 = 5344;   // line 2 (base 3617)
-  static constexpr size_t kTankSize3 = 6464;   // line 3 (base 4421)
+  // per-line tank delay buffers. sizes = base * 1.4 + 240 mod headroom
+  static constexpr size_t kTankSize0 = 3200;
+  static constexpr size_t kTankSize1 = 4256;
+  static constexpr size_t kTankSize2 = 5344;
+  static constexpr size_t kTankSize3 = 6464;
 
  private:
   typedef clouds::FxEngine<kBufferSize, clouds::FORMAT_32_BIT> Engine;
@@ -63,23 +62,19 @@ class Reverb {
 
   MixingMatrix matrix_;
 
-  // per-branch filter state (small, lives wherever class does)
-  float lpf_state_[4];     // air-absorption lp (fixed corner)
+  // per-branch filter state
+  float lpf_state_[4];     // air-absorption lp (modulated by spectral lfos)
   float hpf_state_[4];     // low-cut hp
 
-  // tape-echo line before the input diffuser. fixed 200 ms delay,
-  // feedback amount = echo_feedback knob (TIMBRE)
-  static constexpr size_t kEchoSize = 9600;   // 200 ms @ 48k
-  float echo_buffer_[kEchoSize];
-  int   echo_w_;
+  // 4 recurrent cosine oscillators (Goertzel-style, no sinf at runtime).
+  // y[n] = c * y[n-1] - y[n-2] where c = 2*cos(2π*rate/fs)
+  // ONE mul + ONE sub per sample per oscillator. fixed slow rates,
+  // incommensurate so the lines never re-sync
+  float osc_y1_[4];
+  float osc_y2_[4];
+  float osc_c_[4];
 
-  // 4 granular pitch shifters for chord harmonics (3rd / 5th / 7th / 9th).
-  // each reads from the echo buffer with two crossfaded grains. shifter[i]
-  // phase advances at (ratio[i] - 1) per sample; positions 0..kGrainSize
-  static constexpr int kGrainSize = 4800;   // 100 ms grain @ 48k
-  float chord_phase_[4];
-
-  // tank buffers - main sram. each modulated, linear-interp read
+  // tank buffers - main sram
   float tank_0_[kTankSize0];
   float tank_1_[kTankSize1];
   float tank_2_[kTankSize2];
@@ -89,15 +84,14 @@ class Reverb {
   // tick -> process cache
   float coef_input_gain_;
   float coef_pre_delay_samples_;
-  float coef_input_diff_a_;       // dattorro-style input ap gains
+  float coef_input_diff_a_;
   float coef_input_diff_b_;
-  float coef_branch_diff_;        // in-loop ap gain
+  float coef_branch_diff_;
   float coef_feedback_;
   float coef_low_cut_hp_;
-  float coef_echo_feedback_;
+  float coef_damping_;       // center lp coefficient
+  float coef_spectral_;      // lfo modulation depth around damping center
   float coef_dry_wet_;
-  float coef_echo_delay_samples_;
-  float coef_chord_gain_;
 
   float sample_rate_;
   float peak_;
