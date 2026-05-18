@@ -32,14 +32,14 @@ float ReadSlot(const ReverbParameters& p, ParameterId id) {
 
 const PanelConfig kConfig = {
   .defaults = {
-    .decay      = 0.6f,
-    .tone       = 0.55f,    // slightly dark
-    .size       = 0.65f,    // medium-large hall
+    .decay      = 0.6f,     // curve maps this to loop gain ≈ 0.84 → ~4 s tail
+    .tone       = 0.5f,     // neutral tilt
+    .size       = 0.85f,    // mostly-hadamard matrix - smooth wash, not combs
     .dry_wet    = 0.5f,
     .pre_delay  = 0.0f,
-    .diffusion  = 0.5f,
-    .modulation = 0.15f,    // gentle by default
-    .low_cut    = 0.2f,     // ~80 Hz hp in loop
+    .diffusion  = 0.6f,     // more smear by default
+    .modulation = 0.25f,    // ~1.25 ms swing - audible chorusing
+    .low_cut    = 0.3f,     // ~40 Hz hp - kills sub buildup at high decay
   },
   .algorithm = { PARAM_DECAY,   PARAM_PRE_DELAY  },
   .timbre    = { PARAM_TONE,    PARAM_DIFFUSION  },

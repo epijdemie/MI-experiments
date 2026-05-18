@@ -23,8 +23,10 @@ constexpr float kPreDelayMaxSamples = 2400.0f;  // 50 ms @ 48k
 // max delay-line modulation swing in samples. ±240 ≈ ±5 ms at 48k
 constexpr float kMaxModSamples = 240.0f;
 
-// matrix gain compensation. 0.7 ≈ 1/√2 (peak of hadamard at α=1)
-constexpr float kMatrixComp = 0.7f;
+// matrix gain compensation. 1.0 lets the loop reach unity gain at decay=1.0
+// (cathedral / freeze territory). smoothsat bounds the loop — it asymptotes
+// to ±1 so overshoot is absorbed musically. lower values cap rt60 short
+constexpr float kMatrixComp = 1.0f;
 
 // air-absorption lp coefficient. ~5 kHz at 48k. always-on hf damping
 constexpr float kAbsorbCoef = 0.50f;
@@ -95,7 +97,12 @@ void Reverb::Tick() {
   coef_input_diff_a_       = 0.75f  * parameters_.diffusion;
   coef_input_diff_b_       = 0.625f * parameters_.diffusion;
   coef_branch_diff_        = 0.5f * parameters_.diffusion;
-  coef_feedback_           = parameters_.decay;        // 0..1
+  // decay knob: x*(2-x) curve so middle position already gives long tail.
+  // 0.0→0, 0.5→0.75, 0.75→0.94, 1.0→1.0. saturator catches overshoot at top
+  {
+    const float d = parameters_.decay;
+    coef_feedback_ = d * (2.0f - d);
+  }
   coef_mod_amplitude_      = parameters_.modulation * kMaxModSamples;
   coef_dry_wet_            = parameters_.dry_wet;
 
