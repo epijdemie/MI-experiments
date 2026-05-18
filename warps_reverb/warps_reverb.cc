@@ -46,9 +46,7 @@ void FillBuffer(warps::Codec::Frame* input,
                 warps::Codec::Frame* output,
                 size_t n) {
   cv_scaler.DetectAudioNormalization(input, n);
-  cv_scaler.Read(reverb.mutable_parameters(),
-                 ui.shifted(),
-                 ui.mode_config());
+  cv_scaler.Read(reverb.mutable_parameters(), ui.shifted());
   ui.Poll();
 
   for (size_t i = 0; i < n; ++i) {

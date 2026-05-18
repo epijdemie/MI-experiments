@@ -1,5 +1,5 @@
-// cv scaler - adc, lpf, soft-takeover across shift, dispatch via ModeConfig.
-// 4 pots × 2 layers (unshifted / button-held). cv jacks always feed unshifted
+// cv scaler - adc, lpf, soft-takeover across shift, dispatch via fixed panel
+// mapping. 4 pots × 2 layers (unshifted / button-held). cv jacks feed unshifted
 
 #ifndef WARPS_REVERB_CV_SCALER_H_
 #define WARPS_REVERB_CV_SCALER_H_
@@ -28,7 +28,7 @@ class SoftTakeover {
     prev_layer_ = -1;
   }
 
-  // re-arm on mode change - knob has to physically wiggle to engage
+  // re-arm: knob must wiggle to engage
   inline void Reset(float unshifted, float shifted) {
     committed_[0] = unshifted;
     committed_[1] = shifted;
@@ -58,7 +58,7 @@ class SoftTakeover {
   inline float committed(int layer) const { return committed_[layer]; }
 
  private:
-  // 0.5% - well above adc+lpf noise floor. (2% felt like a dead zone.)
+  // 0.5% - well above adc+lpf noise floor
   static constexpr float kMoveThreshold = 0.005f;
   float committed_[2];
   float pot_at_entry_[2];
@@ -72,10 +72,10 @@ class CvScaler {
   ~CvScaler() { }
 
   void Init();
-  void Read(ReverbParameters* p, bool shifted, const ModeConfig& mode_cfg);
+  void Read(ReverbParameters* p, bool shifted);
 
-  // re-sync committed values to new mode's defaults, re-arm takeover
-  void HandleModeChange(const ModeConfig& mode_cfg);
+  // re-sync committed values to panel defaults, re-arm takeover
+  void HandleReset();
 
   bool TakeMovementFlag();
 

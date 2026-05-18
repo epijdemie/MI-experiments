@@ -13,7 +13,7 @@ void CvScaler::Init() {
   adc_.Init();
   std::fill(&lp_state_[0], &lp_state_[ADC_LAST], 0.0f);
 
-  // neutral seeds - HandleModeChange repaints from mode defaults
+  // neutral seeds - HandleReset repaints from kConfig.defaults
   algorithm_.Init(0.5f, 0.5f);
   timbre_   .Init(0.5f, 0.5f);
   level1_   .Init(0.5f, 0.5f);
@@ -23,19 +23,19 @@ void CvScaler::Init() {
   movement_flag_ = false;
 }
 
-void CvScaler::HandleModeChange(const ModeConfig& cfg) {
+void CvScaler::HandleReset() {
   algorithm_.Reset(
-      ReadSlot(cfg.defaults, cfg.algorithm.unshifted),
-      ReadSlot(cfg.defaults, cfg.algorithm.shifted));
+      ReadSlot(kConfig.defaults, kConfig.algorithm.unshifted),
+      ReadSlot(kConfig.defaults, kConfig.algorithm.shifted));
   timbre_.Reset(
-      ReadSlot(cfg.defaults, cfg.timbre.unshifted),
-      ReadSlot(cfg.defaults, cfg.timbre.shifted));
+      ReadSlot(kConfig.defaults, kConfig.timbre.unshifted),
+      ReadSlot(kConfig.defaults, kConfig.timbre.shifted));
   level1_.Reset(
-      ReadSlot(cfg.defaults, cfg.level1.unshifted),
-      ReadSlot(cfg.defaults, cfg.level1.shifted));
+      ReadSlot(kConfig.defaults, kConfig.level1.unshifted),
+      ReadSlot(kConfig.defaults, kConfig.level1.shifted));
   level2_.Reset(
-      ReadSlot(cfg.defaults, cfg.level2.unshifted),
-      ReadSlot(cfg.defaults, cfg.level2.shifted));
+      ReadSlot(kConfig.defaults, kConfig.level2.unshifted),
+      ReadSlot(kConfig.defaults, kConfig.level2.shifted));
 }
 
 void CvScaler::UpdateLpf() {
@@ -66,22 +66,21 @@ namespace {
 // pot+cv -> soft-takeover'd param. cv is bipolar around 0.5 (±5V -> ±0.5)
 inline void Dispatch(SoftTakeover* st,
                      float pot, float cv, int layer,
-                     ParameterId unshifted_id, ParameterId shifted_id,
+                     const PotMapping& map,
                      ReverbParameters* p) {
   (void)st->Process(pot, layer);
 
   // unshifted always live (cv keeps modulating during shift edits)
   float v = st->committed(0) + cv;
   CONSTRAIN(v, 0.0f, 1.0f);
-  *WriteSlot(p, unshifted_id) = v;
+  *WriteSlot(p, map.unshifted) = v;
 
-  *WriteSlot(p, shifted_id) = st->committed(1);
+  *WriteSlot(p, map.shifted) = st->committed(1);
 }
 
 }  // namespace
 
-void CvScaler::Read(ReverbParameters* p, bool shifted,
-                    const ModeConfig& mode_cfg) {
+void CvScaler::Read(ReverbParameters* p, bool shifted) {
   UpdateLpf();
 
   const int layer = shifted ? 1 : 0;
@@ -97,14 +96,10 @@ void CvScaler::Read(ReverbParameters* p, bool shifted,
   const float l1_cv     = 0.5f - lp_state_[ADC_LEVEL_1_CV];
   const float l2_cv     = 0.5f - lp_state_[ADC_LEVEL_2_CV];
 
-  Dispatch(&algorithm_, algo_pot,   algo_cv,   layer,
-           mode_cfg.algorithm.unshifted, mode_cfg.algorithm.shifted, p);
-  Dispatch(&timbre_,    timbre_pot, timbre_cv, layer,
-           mode_cfg.timbre.unshifted,    mode_cfg.timbre.shifted,    p);
-  Dispatch(&level1_,    l1_pot,     l1_cv,     layer,
-           mode_cfg.level1.unshifted,    mode_cfg.level1.shifted,    p);
-  Dispatch(&level2_,    l2_pot,     l2_cv,     layer,
-           mode_cfg.level2.unshifted,    mode_cfg.level2.shifted,    p);
+  Dispatch(&algorithm_, algo_pot,   algo_cv,   layer, kConfig.algorithm, p);
+  Dispatch(&timbre_,    timbre_pot, timbre_cv, layer, kConfig.timbre,    p);
+  Dispatch(&level1_,    l1_pot,     l1_cv,     layer, kConfig.level1,    p);
+  Dispatch(&level2_,    l2_pot,     l2_cv,     layer, kConfig.level2,    p);
 
   // movement flag - separates shift gesture from a tap
   constexpr float kMoveThreshold = 0.01f;
