@@ -37,8 +37,9 @@ constexpr float kChordRates[4] = {
 };
 
 // chord shifter input scale. 4 shifters × Hann pair (sums to 1) = unit RMS
-// per shifter; sum of 4 is ~2× RMS. scale down so wet_in isn't blown out
-constexpr float kChordMix = 0.25f;
+// per shifter; conservative scale to keep wet_in well under any saturator's
+// knee even when all shifters constructively align
+constexpr float kChordMix = 0.12f;
 
 // echo delay range. 30 ms .. 200 ms (full buffer)
 constexpr float kEchoTimeMin = 1440.0f;     // 30 ms @ 48k
@@ -393,6 +394,12 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
     c.Read(out_ap_r_b TAIL, kOutAp);
     c.WriteAllPass(out_ap_r_b, -kOutAp);
     c.Write(wet_r, 0.0f);
+
+    // safety net: any NaN/Inf in the wet path would propagate through
+    // Crossfade (NaN * 0 = NaN, not 0) and corrupt the dry signal too.
+    // catch and zero rather than passing garbage to the codec
+    if (!std::isfinite(wet_l)) wet_l = 0.0f;
+    if (!std::isfinite(wet_r)) wet_r = 0.0f;
 
     const float magl = wet_l < 0 ? -wet_l : wet_l;
     const float magr = wet_r < 0 ? -wet_r : wet_r;
