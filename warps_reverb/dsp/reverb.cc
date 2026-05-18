@@ -26,18 +26,29 @@ constexpr float kMatrixComp = 1.0f;
 // fxengine output ap gain (fixed). dattorro standard
 constexpr float kOutAp = 0.5f;
 
-// spectral oscillator rates (Hz). slow + mutually incommensurate so the 4
-// lines never re-sync → tail keeps evolving
+// hardcoded: diffusion knob was barely audible. these are the gains we
+// landed on (dattorro pair × 0.85 knob)
+constexpr float kInputDiffA = 0.75f  * 0.85f;
+constexpr float kInputDiffB = 0.625f * 0.85f;
+constexpr float kBranchDiff = 0.7f   * 0.85f;
+
+// in-loop absorption LP center. ~7 kHz at 48k - tail stays bright.
+// spectral modulation moves around this point in a SMALL window
+constexpr float kAbsorbCenter = 0.6f;
+// spectral max swing ±0.10 → k ∈ [0.5, 0.7], corner 5..9 kHz.
+// keeps the tail audibly long even at full spectral
+constexpr float kMaxSpectral = 0.10f;
+
+// spectral oscillator rates (Hz). slow + mutually incommensurate
 constexpr float kSpectralRateHz[4] = { 0.073f, 0.097f, 0.131f, 0.181f };
 
-// smooth sat: y = x / ⁴√(1 + x⁴). bounded ±1, smooth knee
+// smooth sat: y = x / ⁴√(1 + x⁴)
 inline float SmoothSat(float x) {
   const float x2 = x * x;
   const float x4 = x2 * x2;
   return x / stmlib::Sqrt(stmlib::Sqrt(1.0f + x4));
 }
 
-// tank read with linear interpolation. delay in [0, size-1].
 inline float ReadTankLinear(const float* buf, int size, int w, float delay) {
   const int delay_i = static_cast<int>(delay);
   const float delay_f = delay - static_cast<float>(delay_i);
@@ -65,27 +76,28 @@ void Reverb::Init(float* buffer, float sample_rate) {
   std::memset(tank_3_, 0, sizeof(tank_3_));
   for (int i = 0; i < 4; ++i) tank_w_[i] = 0;
 
-  // initialize 4 recurrent cos oscillators. one-time sinf/cosf at boot,
-  // then ONE mul + ONE sub per sample per osc forever after.
-  // y[n] = c*y[n-1] - y[n-2] generates cos(ω*n + phase).
-  // seed: y2 = cos(phase - ω), y1 = cos(phase)
   for (int i = 0; i < 4; ++i) {
     const float omega = 2.0f * static_cast<float>(M_PI)
                       * kSpectralRateHz[i] / sample_rate_;
     osc_c_[i] = 2.0f * cosf(omega);
-    const float phase = static_cast<float>(i) * 0.78539816f;  // π/4 stagger
+    const float phase = static_cast<float>(i) * 0.78539816f;
     osc_y1_[i] = cosf(phase);
     osc_y2_[i] = cosf(phase - omega);
   }
 
-  parameters_.decay     = 0.5f;
-  parameters_.diffusion = 0.5f;
-  parameters_.size      = 0.5f;
-  parameters_.dry_wet   = 0.5f;
-  parameters_.pre_delay = 0.0f;
-  parameters_.damping   = 0.5f;
-  parameters_.spectral  = 0.0f;
-  parameters_.low_cut   = 0.0f;
+  // biquad state cleared
+  bq_b0_ = bq_b1_ = bq_b2_ = bq_a1_ = bq_a2_ = 0.0f;
+  bq_l_x1_ = bq_l_x2_ = bq_l_y1_ = bq_l_y2_ = 0.0f;
+  bq_r_x1_ = bq_r_x2_ = bq_r_y1_ = bq_r_y2_ = 0.0f;
+
+  parameters_.decay         = 0.5f;
+  parameters_.output_cutoff = 0.85f;
+  parameters_.size          = 0.5f;
+  parameters_.dry_wet       = 0.5f;
+  parameters_.pre_delay     = 0.0f;
+  parameters_.resonance     = 0.0f;
+  parameters_.spectral      = 0.0f;
+  parameters_.low_cut       = 0.0f;
 
   Tick();
 }
@@ -94,14 +106,7 @@ void Reverb::Tick() {
   coef_input_gain_         = 0.5f;
   coef_pre_delay_samples_  = parameters_.pre_delay * kPreDelayMaxSamples;
 
-  // input diffuser: dattorro pair scaled by knob
-  coef_input_diff_a_       = 0.75f  * parameters_.diffusion;
-  coef_input_diff_b_       = 0.625f * parameters_.diffusion;
-  // in-loop ap is the only diffuser inside the feedback loop - higher gain
-  coef_branch_diff_        = 0.7f   * parameters_.diffusion;
-
-  // decay knob: x*(2-x) curve so middle position already gives long tail.
-  // 0.0→0, 0.5→0.75, 0.75→0.94, 1.0→1.0
+  // decay knob: x*(2-x) curve - middle position already gives long tail
   {
     const float d = parameters_.decay;
     coef_feedback_ = d * (2.0f - d);
@@ -113,26 +118,34 @@ void Reverb::Tick() {
   const float hp_hz = 5.0f * exp2f(parameters_.low_cut * 5.32f);
   coef_low_cut_hp_  = 2.0f * static_cast<float>(M_PI) * hp_hz / sample_rate_;
 
-  // damping = LP coefficient center. maps knob to musical brightness range.
-  // k = 0.1 → ~750 Hz (very dark), 0.5 → ~5 kHz, 0.9 → ~14 kHz (open)
-  coef_damping_ = 0.1f + 0.8f * parameters_.damping;
+  coef_spectral_ = kMaxSpectral * parameters_.spectral;
 
-  // spectral depth: lfo swing around damping center. capped so k stays in
-  // safe range. max swing ±0.3 means k ∈ [damp±0.3] clamped to [0.05, 0.95]
-  coef_spectral_ = 0.30f * parameters_.spectral;
+  // post-reverb biquad lp coefficients (RBJ cookbook, direct form I).
+  // cutoff: 100 Hz .. 18 kHz log. Q: 0.5 .. 6 (resonance from flat to ringing)
+  const float fc = 100.0f * exp2f(parameters_.output_cutoff * 7.5f);
+  const float q  = 0.5f + parameters_.resonance * 5.5f;
+  // safe clamp: stop fc from approaching Nyquist
+  float fc_clamped = fc;
+  if (fc_clamped > 18000.0f) fc_clamped = 18000.0f;
+  const float omega = 2.0f * static_cast<float>(M_PI) * fc_clamped / sample_rate_;
+  const float sw = sinf(omega);
+  const float cw = cosf(omega);
+  const float alpha = sw / (2.0f * q);
+  const float a0 = 1.0f + alpha;
+  const float inv_a0 = 1.0f / a0;
+  const float one_minus_cw = 1.0f - cw;
+  bq_b0_ = (one_minus_cw * 0.5f) * inv_a0;
+  bq_b1_ = one_minus_cw * inv_a0;
+  bq_b2_ = bq_b0_;
+  bq_a1_ = (-2.0f * cw) * inv_a0;
+  bq_a2_ = (1.0f - alpha) * inv_a0;
 
-  // matrix locked at full hadamard
   matrix_.set_alpha(1.0f);
 }
 
 void Reverb::Process(FloatFrame* in_out, size_t size) {
-  // fxengine reservations (samples @ 48k):
-  //   pre_delay         2400           50 ms
-  //   input_ap0..3      230,173,613,448  dattorro input diffuser (~28 ms)
-  //   branch_ap0..3     4 × 256        in-loop diffusion
-  //   out_ap_l_a/b      230, 560       output diffuser L
-  //   out_ap_r_a/b      320, 480       output diffuser R
-  // total: 6478 of 8192
+  // fxengine reservations: pre_delay + input diffuser + branch APs + output APs
+  // total 6478 of 8192
   typedef Engine::Reserve<2400,
           Engine::Reserve<230,
           Engine::Reserve<173,
@@ -164,12 +177,8 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
 
   const float gain      = coef_input_gain_;
   const float pre       = coef_pre_delay_samples_;
-  const float kda       = coef_input_diff_a_;
-  const float kdb       = coef_input_diff_b_;
-  const float kap       = coef_branch_diff_;
   const float kfb       = coef_feedback_;
   const float khp       = coef_low_cut_hp_;
-  const float damp_k    = coef_damping_;
   const float spectral  = coef_spectral_;
   const float wet       = coef_dry_wet_;
 
@@ -190,87 +199,93 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
   float* const t3 = tank_3_;  const int n3 = static_cast<int>(kTankSize3);
   int w0 = tank_w_[0], w1 = tank_w_[1], w2 = tank_w_[2], w3 = tank_w_[3];
 
-  // oscillator state to locals for tight inner loop
   float y1_0 = osc_y1_[0], y2_0 = osc_y2_[0]; const float oc0 = osc_c_[0];
   float y1_1 = osc_y1_[1], y2_1 = osc_y2_[1]; const float oc1 = osc_c_[1];
   float y1_2 = osc_y1_[2], y2_2 = osc_y2_[2]; const float oc2 = osc_c_[2];
   float y1_3 = osc_y1_[3], y2_3 = osc_y2_[3]; const float oc3 = osc_c_[3];
 
+  // biquad coefficients (constant for the block, computed in Tick)
+  const float bb0 = bq_b0_, bb1 = bq_b1_, bb2 = bq_b2_;
+  const float ba1 = bq_a1_, ba2 = bq_a2_;
+  // biquad state (per channel)
+  float lx1 = bq_l_x1_, lx2 = bq_l_x2_, ly1 = bq_l_y1_, ly2 = bq_l_y2_;
+  float rx1 = bq_r_x1_, rx2 = bq_r_x2_, ry1 = bq_r_y1_, ry2 = bq_r_y2_;
+
   while (size--) {
-    // advance 4 recurrent cos oscillators. ONE mul + ONE sub per osc
+    // advance 4 recurrent cos oscs
     const float v0 = oc0 * y1_0 - y2_0; y2_0 = y1_0; y1_0 = v0;
     const float v1 = oc1 * y1_1 - y2_1; y2_1 = y1_1; y1_1 = v1;
     const float v2 = oc2 * y1_2 - y2_2; y2_2 = y1_2; y1_2 = v2;
     const float v3 = oc3 * y1_3 - y2_3; y2_3 = y1_3; y1_3 = v3;
 
-    // per-branch lp coefficient = damp ± spectral * lfo, clamped to safe range
-    float k_b0 = damp_k + spectral * v0;
-    float k_b1 = damp_k + spectral * v1;
-    float k_b2 = damp_k + spectral * v2;
-    float k_b3 = damp_k + spectral * v3;
-    if (k_b0 < 0.05f) k_b0 = 0.05f; else if (k_b0 > 0.95f) k_b0 = 0.95f;
-    if (k_b1 < 0.05f) k_b1 = 0.05f; else if (k_b1 > 0.95f) k_b1 = 0.95f;
-    if (k_b2 < 0.05f) k_b2 = 0.05f; else if (k_b2 > 0.95f) k_b2 = 0.95f;
-    if (k_b3 < 0.05f) k_b3 = 0.05f; else if (k_b3 > 0.95f) k_b3 = 0.95f;
+    // per-branch lp coefficients - narrow modulation around bright center
+    float k_b0 = kAbsorbCenter + spectral * v0;
+    float k_b1 = kAbsorbCenter + spectral * v1;
+    float k_b2 = kAbsorbCenter + spectral * v2;
+    float k_b3 = kAbsorbCenter + spectral * v3;
+    if (k_b0 < 0.20f) k_b0 = 0.20f; else if (k_b0 > 0.90f) k_b0 = 0.90f;
+    if (k_b1 < 0.20f) k_b1 = 0.20f; else if (k_b1 > 0.90f) k_b1 = 0.90f;
+    if (k_b2 < 0.20f) k_b2 = 0.20f; else if (k_b2 > 0.90f) k_b2 = 0.90f;
+    if (k_b3 < 0.20f) k_b3 = 0.20f; else if (k_b3 > 0.90f) k_b3 = 0.90f;
 
     engine_.Start(&c);
 
-    // ---- pre-delay ----
+    // pre-delay
     c.Read(in_out->l + in_out->r, gain);
     c.Write(pre_delay, 0.0f);
     c.Interpolate(pre_delay, pre, 1.0f);
 
-    // ---- input diffuser: 4 series APs, alternating signs ----
-    c.Read(input_ap0 TAIL, -kda);
-    c.WriteAllPass(input_ap0, kda);
-    c.Read(input_ap1 TAIL, kda);
-    c.WriteAllPass(input_ap1, -kda);
-    c.Read(input_ap2 TAIL, -kdb);
-    c.WriteAllPass(input_ap2, kdb);
-    c.Read(input_ap3 TAIL, kdb);
-    c.WriteAllPass(input_ap3, -kdb);
+    // input diffuser (hardcoded gains)
+    c.Read(input_ap0 TAIL, -kInputDiffA);
+    c.WriteAllPass(input_ap0, kInputDiffA);
+    c.Read(input_ap1 TAIL, kInputDiffA);
+    c.WriteAllPass(input_ap1, -kInputDiffA);
+    c.Read(input_ap2 TAIL, -kInputDiffB);
+    c.WriteAllPass(input_ap2, kInputDiffB);
+    c.Read(input_ap3 TAIL, kInputDiffB);
+    c.WriteAllPass(input_ap3, -kInputDiffB);
 
     float wet_in;
     c.Write(wet_in, 0.0f);
 
-    // ---- tank reads (static delays) ----
+    // tank reads
     const float r0 = ReadTankLinear(t0, n0, w0, tau0);
     const float r1 = ReadTankLinear(t1, n1, w1, tau1);
     const float r2 = ReadTankLinear(t2, n2, w2, tau2);
     const float r3 = ReadTankLinear(t3, n3, w3, tau3);
 
-    // ---- per-branch: ap-in-loop, modulated absorb-lp, low-cut hp ----
+    // per-branch chain
     float b0, b1, b2, b3;
 
     c.Load(wet_in + r0);
-    c.Read(ap0 TAIL, -kap);
-    c.WriteAllPass(ap0, kap);
+    c.Read(ap0 TAIL, -kBranchDiff);
+    c.WriteAllPass(ap0, kBranchDiff);
     c.Lp(lp0, k_b0);
     c.Hp(hp0, khp);
     c.Write(b0, 0.0f);
 
     c.Load(wet_in + r1);
-    c.Read(ap1 TAIL, kap);
-    c.WriteAllPass(ap1, -kap);
+    c.Read(ap1 TAIL, kBranchDiff);
+    c.WriteAllPass(ap1, -kBranchDiff);
     c.Lp(lp1, k_b1);
     c.Hp(hp1, khp);
     c.Write(b1, 0.0f);
 
     c.Load(wet_in + r2);
-    c.Read(ap2 TAIL, -kap);
-    c.WriteAllPass(ap2, kap);
+    c.Read(ap2 TAIL, -kBranchDiff);
+    c.WriteAllPass(ap2, kBranchDiff);
     c.Lp(lp2, k_b2);
     c.Hp(hp2, khp);
     c.Write(b2, 0.0f);
 
     c.Load(wet_in + r3);
-    c.Read(ap3 TAIL, kap);
-    c.WriteAllPass(ap3, -kap);
+    c.Read(ap3 TAIL, kBranchDiff);
+    c.WriteAllPass(ap3, -kBranchDiff);
     c.Lp(lp3, k_b3);
     c.Hp(hp3, khp);
     c.Write(b3, 0.0f);
 
-    // ---- matrix mix + smoothsat → tank write ----
+    // matrix mix + smoothsat → tank write
     float branch_in[4] = { b0, b1, b2, b3 };
     float mixed[4];
     matrix_.Apply(branch_in, mixed);
@@ -284,33 +299,51 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
     if (++w2 >= n2) w2 = 0;
     if (++w3 >= n3) w3 = 0;
 
-    // ---- stereo tap + output diffuser ----
-    const float tap_l = b0 + b2;
-    const float tap_r = b1 + b3;
+    // ---- wet output tap from TANK reads (no direct input bleed) ----
+    // r_n contains saturated, decayed, matrix-mixed history. pure tail.
+    const float tap_l = r0 + r2;
+    const float tap_r = r1 + r3;
 
-    float wet_l, wet_r;
+    // output diffuser
+    float diff_l, diff_r;
 
     c.Load(tap_l);
     c.Read(out_ap_l_a TAIL, -kOutAp);
     c.WriteAllPass(out_ap_l_a, kOutAp);
     c.Read(out_ap_l_b TAIL, kOutAp);
     c.WriteAllPass(out_ap_l_b, -kOutAp);
-    c.Write(wet_l, 0.0f);
+    c.Write(diff_l, 0.0f);
 
     c.Load(tap_r);
     c.Read(out_ap_r_a TAIL, -kOutAp);
     c.WriteAllPass(out_ap_r_a, kOutAp);
     c.Read(out_ap_r_b TAIL, kOutAp);
     c.WriteAllPass(out_ap_r_b, -kOutAp);
-    c.Write(wet_r, 0.0f);
+    c.Write(diff_r, 0.0f);
 
-    const float magl = wet_l < 0 ? -wet_l : wet_l;
-    const float magr = wet_r < 0 ? -wet_r : wet_r;
+    // ---- biquad LP per channel (user cutoff + resonance) ----
+    const float wet_l = bb0 * diff_l + bb1 * lx1 + bb2 * lx2
+                      - ba1 * ly1 - ba2 * ly2;
+    lx2 = lx1; lx1 = diff_l;
+    ly2 = ly1; ly1 = wet_l;
+
+    const float wet_r = bb0 * diff_r + bb1 * rx1 + bb2 * rx2
+                      - ba1 * ry1 - ba2 * ry2;
+    rx2 = rx1; rx1 = diff_r;
+    ry2 = ry1; ry1 = wet_r;
+
+    float final_l = wet_l;
+    float final_r = wet_r;
+    if (!std::isfinite(final_l)) final_l = 0.0f;
+    if (!std::isfinite(final_r)) final_r = 0.0f;
+
+    const float magl = final_l < 0 ? -final_l : final_l;
+    const float magr = final_r < 0 ? -final_r : final_r;
     const float magm = magl > magr ? magl : magr;
     if (magm > peak_block_) peak_block_ = magm;
 
-    in_out->l = stmlib::Crossfade(in_out->l, wet_l, wet);
-    in_out->r = stmlib::Crossfade(in_out->r, wet_r, wet);
+    in_out->l = stmlib::Crossfade(in_out->l, final_l, wet);
+    in_out->r = stmlib::Crossfade(in_out->r, final_r, wet);
     ++in_out;
   }
 
@@ -324,6 +357,8 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
   osc_y1_[1] = y1_1; osc_y2_[1] = y2_1;
   osc_y1_[2] = y1_2; osc_y2_[2] = y2_2;
   osc_y1_[3] = y1_3; osc_y2_[3] = y2_3;
+  bq_l_x1_ = lx1; bq_l_x2_ = lx2; bq_l_y1_ = ly1; bq_l_y2_ = ly2;
+  bq_r_x1_ = rx1; bq_r_x2_ = rx2; bq_r_y1_ = ry1; bq_r_y2_ = ry2;
 
   peak_ = peak_block_ > peak_ ? peak_block_ : peak_ * 0.9f;
   peak_block_ = 0.0f;

@@ -9,19 +9,17 @@ namespace warps_reverb {
 
 struct ReverbParameters {
   // performance layer
-  float decay;        // fb gain. 1.0 = freeze. saturator catches overshoot
-  float diffusion;    // input/output ap gain - echo→smear
-  float size;         // tank delay scaling (matrix locked at full hadamard)
-  float dry_wet;      // mix
+  float decay;          // fb gain. 1.0 = freeze. saturator catches overshoot
+  float output_cutoff;  // post-reverb biquad lp cutoff (100 Hz..18 kHz log)
+  float size;           // tank delay scaling
+  float dry_wet;        // mix
 
   // sculpt layer (shifted)
-  float pre_delay;    // 0..50ms front-of-chain delay
-  float damping;      // tail brightness - per-branch lp corner
-  float spectral;     // spectral dynamics depth. 4 slow cos oscillators at
-                      // incommensurate rates modulate per-branch lp cutoff
-                      // → tail spectrum breathes/evolves over many seconds
-                      // without pitch movement
-  float low_cut;      // hp corner in fb path (kills sub buildup)
+  float pre_delay;      // 0..50ms front-of-chain delay
+  float resonance;      // post-reverb biquad Q (0 = flat, 1 = ringing)
+  float spectral;       // in-loop lp modulation depth - subtle spectral
+                        // breathing (4 incommensurate slow cos oscs)
+  float low_cut;        // hp corner in fb path (kills sub buildup)
 };
 
 }  // namespace warps_reverb

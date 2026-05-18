@@ -84,14 +84,17 @@ class Reverb {
   // tick -> process cache
   float coef_input_gain_;
   float coef_pre_delay_samples_;
-  float coef_input_diff_a_;
-  float coef_input_diff_b_;
-  float coef_branch_diff_;
   float coef_feedback_;
   float coef_low_cut_hp_;
-  float coef_damping_;       // center lp coefficient
-  float coef_spectral_;      // lfo modulation depth around damping center
+  float coef_spectral_;      // in-loop lp modulation depth (tiny range)
   float coef_dry_wet_;
+
+  // post-reverb biquad lp on the wet output. cutoff + Q knobs (TIMBRE).
+  // direct form I; state per stereo channel
+  float bq_b0_, bq_b1_, bq_b2_;
+  float bq_a1_, bq_a2_;
+  float bq_l_x1_, bq_l_x2_, bq_l_y1_, bq_l_y2_;
+  float bq_r_x1_, bq_r_x2_, bq_r_y1_, bq_r_y2_;
 
   float sample_rate_;
   float peak_;

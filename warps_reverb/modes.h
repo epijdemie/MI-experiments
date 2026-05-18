@@ -2,7 +2,7 @@
 //
 //                unshifted        shifted
 //   ALGORITHM    decay            pre-delay
-//   TIMBRE       diffusion        damping
+//   TIMBRE       output cutoff    resonance
 //   LEVEL 1      size             spectral
 //   LEVEL 2      mix              low-cut
 
@@ -17,11 +17,11 @@ namespace warps_reverb {
 
 enum ParameterId {
   PARAM_DECAY,
-  PARAM_DIFFUSION,
+  PARAM_OUTPUT_CUTOFF,
   PARAM_SIZE,
   PARAM_DRY_WET,
   PARAM_PRE_DELAY,
-  PARAM_DAMPING,
+  PARAM_RESONANCE,
   PARAM_SPECTRAL,
   PARAM_LOW_CUT,
   PARAM_LAST
