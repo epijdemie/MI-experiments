@@ -82,6 +82,7 @@ void Reverb::Init(float* buffer, float sample_rate) {
   out_pd_w_ = 0;
 
   shimmer_phase_ = kShimmerGrainF;
+  tremolo_phase_ = 0.0f;
 
   // shimmer AM LFO: slow cos recurrence ~0.13 Hz (period ~7.7 s).
   // y[n] = c·y[n-1] - y[n-2], c = 2·cos(ω)
@@ -114,10 +115,24 @@ void Reverb::Tick() {
   coef_input_gain_         = 0.5f;
   coef_pre_delay_samples_  = parameters_.pre_delay * kPreDelayMaxSamples;
 
-  // decay knob: x*(2-x) curve - middle position already gives long tail
+  // decay knob: two halves with distinct characters.
+  // CCW half (0..0.5): loop gain held at 0.75 (medium tail). tremolo on
+  //   wet adds rhythmic chopping. rate + depth scale up as you go CCW.
+  // CW half  (0.5..1): loop gain ramps 0.75 → 1.0 (long → freeze). no tremolo.
   {
     const float d = parameters_.decay;
-    coef_feedback_ = d * (2.0f - d);
+    if (d < 0.5f) {
+      coef_feedback_ = 0.75f;
+      const float t = 1.0f - d * 2.0f;                 // 0 at 0.5, 1 at 0
+      const float rate_hz = 1.0f + t * 9.0f;           // 1..10 Hz
+      coef_tremolo_inc_   = rate_hz / sample_rate_;
+      coef_tremolo_depth_ = t * 0.7f;
+    } else {
+      const float u = (d - 0.5f) * 2.0f;
+      coef_feedback_ = 0.75f + 0.25f * u * (2.0f - u);
+      coef_tremolo_inc_   = 0.0f;
+      coef_tremolo_depth_ = 0.0f;
+    }
   }
 
   // dry/wet: smoothstep × equal-power. smoothstep w'=w²(3-2w) has zero
@@ -218,6 +233,9 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
   const float shimmer_amt = coef_shimmer_;
   const float dry_gain    = coef_dry_gain_;
   const float wet_gain    = coef_wet_gain_;
+  const float trem_inc    = coef_tremolo_inc_;
+  const float trem_depth  = coef_tremolo_depth_;
+  float       trem_phase  = tremolo_phase_;
 
   const float size_k = 0.4f + 1.0f * parameters_.size;
   const float tau0 = kBaseDelay0 * size_k;
@@ -405,6 +423,17 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
     if (!std::isfinite(final_l)) final_l = 0.0f;
     if (!std::isfinite(final_r)) final_r = 0.0f;
 
+    // tremolo on wet (CCW-decay character). triangle LFO, cheap (no sinf).
+    // at depth=0 (decay ≥ 0.5) this is a 1.0 multiply, no audible effect
+    trem_phase += trem_inc;
+    if (trem_phase >= 1.0f) trem_phase -= 1.0f;
+    float trem_t = 2.0f * trem_phase - 1.0f;
+    if (trem_t < 0.0f) trem_t = -trem_t;
+    const float tri = 1.0f - 2.0f * trem_t;  // -1..1, triangle
+    const float trem_amp = 1.0f - trem_depth * 0.5f * (1.0f - tri);
+    final_l *= trem_amp;
+    final_r *= trem_amp;
+
     const float magl = final_l < 0 ? -final_l : final_l;
     const float magr = final_r < 0 ? -final_r : final_r;
     const float magm = magl > magr ? magl : magr;
@@ -426,6 +455,7 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
   tank_w_[2] = w2; tank_w_[3] = w3;
   shimmer_phase_ = shimmer_phase;
   shimmer_lfo_y1_ = lfo_y1; shimmer_lfo_y2_ = lfo_y2;
+  tremolo_phase_ = trem_phase;
   bq_l_x1_ = lx1; bq_l_x2_ = lx2; bq_l_y1_ = ly1; bq_l_y2_ = ly2;
   bq_r_x1_ = rx1; bq_r_x2_ = rx2; bq_r_y1_ = ry1; bq_r_y2_ = ry2;
   out_pd_w_ = out_pd_w;

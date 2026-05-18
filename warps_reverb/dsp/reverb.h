@@ -98,6 +98,9 @@ class Reverb {
   float coef_feedback_;
   float coef_low_cut_hp_;
   float coef_shimmer_;       // shimmer (octave-up) injection amount
+  float coef_tremolo_inc_;   // CCW-decay tremolo on wet: phase increment
+  float coef_tremolo_depth_; // and depth (0..0.7)
+  float tremolo_phase_;      // 0..1 cycling, drives triangle LFO
   float coef_dry_wet_;
   float coef_dry_gain_;      // equal-power crossfade pair (sqrt curves)
   float coef_wet_gain_;
