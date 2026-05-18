@@ -80,6 +80,16 @@ void Reverb::Init(float* buffer, float sample_rate) {
 
   shimmer_phase_ = kShimmerGrainF;
 
+  // shimmer AM LFO: slow cos recurrence ~0.13 Hz (period ~7.7 s).
+  // y[n] = c·y[n-1] - y[n-2], c = 2·cos(ω)
+  {
+    const float lfo_omega = 2.0f * static_cast<float>(M_PI) * 0.13f
+                          / sample_rate_;
+    shimmer_lfo_c_  = 2.0f * cosf(lfo_omega);
+    shimmer_lfo_y1_ = 1.0f;                  // y[0] = cos(0)
+    shimmer_lfo_y2_ = cosf(-lfo_omega);      // y[-1]
+  }
+
   // biquad state cleared
   bq_b0_ = bq_b1_ = bq_b2_ = bq_a1_ = bq_a2_ = 0.0f;
   bq_l_x1_ = bq_l_x2_ = bq_l_y1_ = bq_l_y2_ = 0.0f;
@@ -107,13 +117,13 @@ void Reverb::Tick() {
     coef_feedback_ = d * (2.0f - d);
   }
 
-  // dry/wet with equal-power crossfade (sqrt curves) for responsive
-  // mid-knob feel. plus narrow dead-band on the endpoints (top/bottom 5%)
-  // for guaranteed pure wet/dry zones
+  // dry/wet equal-power crossfade. sqrt(0) = 0 and sqrt(1) = 1 naturally —
+  // no dead-bands needed at the endpoints. smooth from full dry through
+  // 50/50 (-3 dB each) to full wet
   {
     float w = parameters_.dry_wet;
-    if (w < 0.05f) w = 0.0f;
-    else if (w > 0.95f) w = 1.0f;
+    if (w < 0.0f) w = 0.0f;
+    else if (w > 1.0f) w = 1.0f;
     coef_dry_wet_ = w;
     coef_wet_gain_ = stmlib::Sqrt(w);
     coef_dry_gain_ = stmlib::Sqrt(1.0f - w);
@@ -214,6 +224,8 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
   int w0 = tank_w_[0], w1 = tank_w_[1], w2 = tank_w_[2], w3 = tank_w_[3];
 
   float shimmer_phase = shimmer_phase_;
+  float lfo_y1 = shimmer_lfo_y1_, lfo_y2 = shimmer_lfo_y2_;
+  const float lfo_c = shimmer_lfo_c_;
 
   // biquad coefficients (constant for the block, computed in Tick)
   const float bb0 = bq_b0_, bb1 = bq_b1_, bb2 = bq_b2_;
@@ -306,7 +318,13 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
     float sw1 = 2.0f * sn1 - 1.0f; if (sw1 < 0.0f) sw1 = -sw1; sw1 = 1.0f - sw1;
     float sw2 = 2.0f * sn2 - 1.0f; if (sw2 < 0.0f) sw2 = -sw2; sw2 = 1.0f - sw2;
 
-    const float shimmer = (sg1 * sw1 + sg2 * sw2) * shimmer_amt;
+    // shimmer AM LFO: advance cos recurrence, modulate amplitude
+    // depth ±50% around 0.5 → halo glimmers from quiet to full over ~7 s
+    const float lfo_v = lfo_c * lfo_y1 - lfo_y2;
+    lfo_y2 = lfo_y1; lfo_y1 = lfo_v;
+    const float am = 0.5f + 0.5f * lfo_v;   // [0, 1]
+
+    const float shimmer = (sg1 * sw1 + sg2 * sw2) * shimmer_amt * am;
 
     // delay shrinks by 1 per sample → octave up (read advances at 2× write)
     shimmer_phase -= 1.0f;
@@ -388,6 +406,7 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
   tank_w_[0] = w0; tank_w_[1] = w1;
   tank_w_[2] = w2; tank_w_[3] = w3;
   shimmer_phase_ = shimmer_phase;
+  shimmer_lfo_y1_ = lfo_y1; shimmer_lfo_y2_ = lfo_y2;
   bq_l_x1_ = lx1; bq_l_x2_ = lx2; bq_l_y1_ = ly1; bq_l_y2_ = ly2;
   bq_r_x1_ = rx1; bq_r_x2_ = rx2; bq_r_y1_ = ry1; bq_r_y2_ = ry2;
   out_pd_w_ = out_pd_w;

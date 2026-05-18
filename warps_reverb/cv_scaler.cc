@@ -99,7 +99,12 @@ void CvScaler::Read(ReverbParameters* p, bool shifted) {
   Dispatch(&algorithm_, algo_pot,   algo_cv,   layer, kConfig.algorithm, p);
   Dispatch(&timbre_,    timbre_pot, timbre_cv, layer, kConfig.timbre,    p);
   Dispatch(&level1_,    l1_pot,     l1_cv,     layer, kConfig.level1,    p);
-  Dispatch(&level2_,    l2_pot,     l2_cv,     layer, kConfig.level2,    p);
+  // LEVEL 2 CV intentionally zeroed: the level 2 jack on this hardware
+  // appears to normalize to a non-mid voltage, causing cv to subtract ~0.5
+  // from the wet param. result was full-CW pot only reaching ~50% wet.
+  // dry/wet is now pot-only on LEVEL 2 (other params still receive CV)
+  (void)l2_cv;
+  Dispatch(&level2_,    l2_pot,     0.0f,      layer, kConfig.level2,    p);
 
   // movement flag - separates shift gesture from a tap
   constexpr float kMoveThreshold = 0.01f;

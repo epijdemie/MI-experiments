@@ -56,10 +56,7 @@ void Ui::UpdateLeds() {
     r = 255;
   }
   leds_.set_main(r, g, b);
-
-  // osc led off - single mode, no color indication needed
   leds_.set_osc(0, 0);
-
   leds_.Write();
 }
 

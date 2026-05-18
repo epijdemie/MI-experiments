@@ -69,9 +69,13 @@ class Reverb {
   // shimmer pitch shifter (octave up). reads tank_3 at varying delay with
   // two grain heads offset by half-grain, triangle-windowed crossfade.
   // injected into all 4 tank writes → builds rising octave halo over the
-  // tail. cost: ONE shifter, no sinf (triangle window is abs+mul)
+  // tail. cost: ONE shifter, no sinf (triangle window is abs+mul).
+  //
+  // a slow cos-recurrence LFO modulates the shimmer amplitude so the halo
+  // glimmers / pulses rather than sitting at fixed level
   static constexpr int kShimmerGrain = 2048;     // 43 ms grain @ 48k
   float shimmer_phase_;
+  float shimmer_lfo_y1_, shimmer_lfo_y2_, shimmer_lfo_c_;
 
   // tank buffers - main sram
   float tank_0_[kTankSize0];
