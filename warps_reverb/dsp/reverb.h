@@ -65,8 +65,13 @@ class Reverb {
 
   // per-branch filter state (small, lives wherever class does)
   float lpf_state_[4];     // air-absorption lp (fixed corner)
-  float tilt_state_[4];    // tone-tilt lp/hp split state
   float hpf_state_[4];     // low-cut hp
+
+  // tape-echo line before the input diffuser. fixed 200 ms delay,
+  // feedback amount = echo_feedback knob (TIMBRE)
+  static constexpr size_t kEchoSize = 9600;   // 200 ms @ 48k
+  float echo_buffer_[kEchoSize];
+  int   echo_w_;
 
   // own lfos for tank reads (fxengine lfos aren't publicly accessible)
   float lfo_phase_[2];
@@ -87,8 +92,7 @@ class Reverb {
   float coef_branch_diff_;        // in-loop ap gain
   float coef_feedback_;
   float coef_low_cut_hp_;
-  float coef_tilt_lp_gain_;
-  float coef_tilt_hp_gain_;
+  float coef_echo_feedback_;
   float coef_dry_wet_;
   float coef_mod_amplitude_;
 

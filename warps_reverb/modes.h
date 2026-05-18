@@ -2,7 +2,7 @@
 //
 //                unshifted        shifted
 //   ALGORITHM    decay            pre-delay
-//   TIMBRE      tone             diffusion
+//   TIMBRE      echo feedback    diffusion
 //   LEVEL 1     size             modulation
 //   LEVEL 2     mix              low-cut
 
@@ -17,7 +17,7 @@ namespace warps_reverb {
 
 enum ParameterId {
   PARAM_DECAY,
-  PARAM_TONE,
+  PARAM_ECHO_FEEDBACK,
   PARAM_SIZE,
   PARAM_DRY_WET,
   PARAM_PRE_DELAY,

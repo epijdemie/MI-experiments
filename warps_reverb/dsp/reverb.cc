@@ -10,6 +10,7 @@ constexpr size_t Reverb::kTankSize0;
 constexpr size_t Reverb::kTankSize1;
 constexpr size_t Reverb::kTankSize2;
 constexpr size_t Reverb::kTankSize3;
+constexpr size_t Reverb::kEchoSize;
 
 // co-prime base delays @ 48k. ~44/59/75/92ms (hall spread)
 namespace {
@@ -31,11 +32,12 @@ constexpr float kMatrixComp = 1.0f;
 // air-absorption lp coefficient. ~5 kHz at 48k. always-on hf damping
 constexpr float kAbsorbCoef = 0.50f;
 
-// tilt eq split coefficient. ~800 Hz crossover between warm and airy bands
-constexpr float kTiltCoef = 0.105f;
-
 // fxengine output ap gain (fixed). dattorro standard
 constexpr float kOutAp = 0.5f;
+
+// max tape-echo feedback. capped < 1.0 so even at full knob it eventually
+// decays. 0.95 = ~20 audible repeats before -40 dB
+constexpr float kMaxEchoFeedback = 0.95f;
 
 // smooth sat: y = x / ⁴√(1 + x⁴). bounded ±1, smooth knee
 inline float SmoothSat(float x) {
@@ -65,7 +67,6 @@ void Reverb::Init(float* buffer, float sample_rate) {
 
   engine_.Init(buffer);
   std::memset(lpf_state_, 0, sizeof(lpf_state_));
-  std::memset(tilt_state_, 0, sizeof(tilt_state_));
   std::memset(hpf_state_, 0, sizeof(hpf_state_));
 
   std::memset(tank_0_, 0, sizeof(tank_0_));
@@ -74,19 +75,22 @@ void Reverb::Init(float* buffer, float sample_rate) {
   std::memset(tank_3_, 0, sizeof(tank_3_));
   for (int i = 0; i < 4; ++i) tank_w_[i] = 0;
 
+  std::memset(echo_buffer_, 0, sizeof(echo_buffer_));
+  echo_w_ = 0;
+
   lfo_phase_[0] = 0.0f;
   lfo_phase_[1] = 1.5707963f;       // quadrature start
   lfo_phase_inc_[0] = 0.0f;
   lfo_phase_inc_[1] = 0.0f;
 
-  parameters_.decay      = 0.5f;
-  parameters_.tone       = 0.5f;
-  parameters_.size       = 0.5f;
-  parameters_.dry_wet    = 0.5f;
-  parameters_.pre_delay  = 0.0f;
-  parameters_.diffusion  = 0.5f;
-  parameters_.modulation = 0.1f;
-  parameters_.low_cut    = 0.0f;
+  parameters_.decay         = 0.5f;
+  parameters_.echo_feedback = 0.0f;
+  parameters_.size          = 0.5f;
+  parameters_.dry_wet       = 0.5f;
+  parameters_.pre_delay     = 0.0f;
+  parameters_.diffusion     = 0.5f;
+  parameters_.modulation    = 0.1f;
+  parameters_.low_cut       = 0.0f;
 
   Tick();
 }
@@ -113,16 +117,8 @@ void Reverb::Tick() {
   const float hp_hz = 5.0f * exp2f(parameters_.low_cut * 5.32f);
   coef_low_cut_hp_  = 2.0f * static_cast<float>(M_PI) * hp_hz / sample_rate_;
 
-  // tilt eq: complementary lp/hp gains around the 800 Hz split.
-  // both ≤ 1 → loop stays bounded
-  const float tilt = (parameters_.tone - 0.5f) * 2.0f;
-  if (tilt >= 0.0f) {
-    coef_tilt_lp_gain_ = 1.0f - tilt;
-    coef_tilt_hp_gain_ = 1.0f;
-  } else {
-    coef_tilt_lp_gain_ = 1.0f;
-    coef_tilt_hp_gain_ = 1.0f + tilt;
-  }
+  // tape echo feedback. 0 = single pass (no echo), 0.95 = long sustaining loop
+  coef_echo_feedback_ = parameters_.echo_feedback * kMaxEchoFeedback;
 
   // tank-mod lfos. rate climbs with modulation knob: 0.1..1.6 Hz log
   const float lfo_hz = 0.1f * exp2f(parameters_.modulation * 4.0f);
@@ -181,10 +177,13 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
   const float kap       = coef_branch_diff_;
   const float kfb       = coef_feedback_;
   const float khp       = coef_low_cut_hp_;
-  const float lp_gain   = coef_tilt_lp_gain_;
-  const float hp_gain   = coef_tilt_hp_gain_;
+  const float kecho     = coef_echo_feedback_;
   const float wet       = coef_dry_wet_;
   const float ampl      = coef_mod_amplitude_;
+
+  // tape-echo state pulled into locals
+  const int echo_n      = static_cast<int>(kEchoSize);
+  int       echo_w      = echo_w_;
 
   const float size_k = 0.4f + 1.0f * parameters_.size;
   const float tau0 = kBaseDelay0 * size_k;
@@ -196,6 +195,8 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
   float lp2 = lpf_state_[2], lp3 = lpf_state_[3];
   float hp0 = hpf_state_[0], hp1 = hpf_state_[1];
   float hp2 = hpf_state_[2], hp3 = hpf_state_[3];
+
+  float* const echo = echo_buffer_;
 
   // tank pointers + sizes for the loop
   float* const t0 = tank_0_;  const int n0 = static_cast<int>(kTankSize0);
@@ -223,6 +224,20 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
     c.Write(pre_delay, 0.0f);
     c.Interpolate(pre_delay, pre, 1.0f);
 
+    // ---- tape echo (before input diffuser) ----
+    // read tail of echo buffer at full delay, mix with pre-delayed input,
+    // write back. each repeat then goes through the input diffuser + reverb
+    // → wash patterns evolve over time.
+    float pre_input;
+    c.Write(pre_input, 0.0f);
+    int echo_r = echo_w + 1;
+    if (echo_r >= echo_n) echo_r -= echo_n;
+    const float echo_tail = echo[echo_r];
+    const float echo_mix  = pre_input + kecho * echo_tail;
+    echo[echo_w] = echo_mix;
+    if (++echo_w >= echo_n) echo_w = 0;
+    c.Load(echo_mix);
+
     // ---- input diffuser ----
     c.Read(input_ap0 TAIL, -kda);
     c.WriteAllPass(input_ap0, kda);
@@ -242,72 +257,35 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
     const float r2 = ReadTankLinear(t2, n2, w2, tau2 - ampl * lfo_v0);
     const float r3 = ReadTankLinear(t3, n3, w3, tau3 - ampl * lfo_v1);
 
-    // ---- per-branch chain ----
-    // critical: ap operates on (wet_in + tank read), INSIDE the feedback loop.
-    // putting ap only on wet_in (the old shape) leaves the recirculating tank
-    // content undiffused — each line keeps its own modal pitches → karplus
-    // sound. with ap in-loop, the modes break up each pass.
-    //   load(wet_in + r_n) → ap → absorb-lp → tilt eq → low-cut hp → b_n
-    float branch_pre;
+    // ---- per-branch chain: in-loop ap on (wet_in + tank read),
+    // then air-absorb lp, then low-cut hp ----
     float b0, b1, b2, b3;
 
-    // branch 0
     c.Load(wet_in + r0);
     c.Read(ap0 TAIL, -kap);
     c.WriteAllPass(ap0, kap);
     c.Lp(lp0, kAbsorbCoef);
-    c.Write(branch_pre, 0.0f);
-    tilt_state_[0] += kTiltCoef * (branch_pre - tilt_state_[0]);
-    {
-      const float lp_p = tilt_state_[0];
-      const float hp_p = branch_pre - lp_p;
-      c.Load(lp_p * lp_gain + hp_p * hp_gain);
-    }
     c.Hp(hp0, khp);
     c.Write(b0, 0.0f);
 
-    // branch 1
     c.Load(wet_in + r1);
     c.Read(ap1 TAIL, kap);
     c.WriteAllPass(ap1, -kap);
     c.Lp(lp1, kAbsorbCoef);
-    c.Write(branch_pre, 0.0f);
-    tilt_state_[1] += kTiltCoef * (branch_pre - tilt_state_[1]);
-    {
-      const float lp_p = tilt_state_[1];
-      const float hp_p = branch_pre - lp_p;
-      c.Load(lp_p * lp_gain + hp_p * hp_gain);
-    }
     c.Hp(hp1, khp);
     c.Write(b1, 0.0f);
 
-    // branch 2
     c.Load(wet_in + r2);
     c.Read(ap2 TAIL, -kap);
     c.WriteAllPass(ap2, kap);
     c.Lp(lp2, kAbsorbCoef);
-    c.Write(branch_pre, 0.0f);
-    tilt_state_[2] += kTiltCoef * (branch_pre - tilt_state_[2]);
-    {
-      const float lp_p = tilt_state_[2];
-      const float hp_p = branch_pre - lp_p;
-      c.Load(lp_p * lp_gain + hp_p * hp_gain);
-    }
     c.Hp(hp2, khp);
     c.Write(b2, 0.0f);
 
-    // branch 3
     c.Load(wet_in + r3);
     c.Read(ap3 TAIL, kap);
     c.WriteAllPass(ap3, -kap);
     c.Lp(lp3, kAbsorbCoef);
-    c.Write(branch_pre, 0.0f);
-    tilt_state_[3] += kTiltCoef * (branch_pre - tilt_state_[3]);
-    {
-      const float lp_p = tilt_state_[3];
-      const float hp_p = branch_pre - lp_p;
-      c.Load(lp_p * lp_gain + hp_p * hp_gain);
-    }
     c.Hp(hp3, khp);
     c.Write(b3, 0.0f);
 
@@ -363,6 +341,7 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
   tank_w_[2] = w2; tank_w_[3] = w3;
   lfo_phase_[0] = lfo_ph0;
   lfo_phase_[1] = lfo_ph1;
+  echo_w_ = echo_w;
 
   // peak: instant attack, ~150ms release
   peak_ = peak_block_ > peak_ ? peak_block_ : peak_ * 0.9f;
