@@ -64,7 +64,12 @@ void Reverb::Init(uint16_t* buffer, float sample_rate) {
 void Reverb::Tick() {
   coef_input_gain_         = 0.5f;
   coef_pre_delay_samples_  = parameters_.pre_delay * kPreDelayMaxSamples;
-  coef_diffusion_          = 0.8f * parameters_.diffusion;
+  // input diffuser: dattorro 0.75 / 0.625 pair, scaled by knob
+  coef_input_diff_a_       = 0.75f  * parameters_.diffusion;
+  coef_input_diff_b_       = 0.625f * parameters_.diffusion;
+  // in-loop branch ap. reduced from 0.8× since input diffuser carries most of
+  // the smearing now
+  coef_branch_diff_        = 0.5f * parameters_.diffusion;
   coef_feedback_           = parameters_.decay;        // 0..1
   coef_mod_amplitude_      = parameters_.modulation * 0.6f;
   coef_dry_wet_            = parameters_.dry_wet;
@@ -96,8 +101,17 @@ void Reverb::Tick() {
 }
 
 void Reverb::Process(FloatFrame* in_out, size_t size) {
-  // fxengine reservations: pre_delay 4800 + 4×ap 1024 + 4×del 24800 = 30624
+  // fxengine reservations (samples @ 48k):
+  //   pre_delay         4800   100 ms front-of-chain delay
+  //   input_ap0..3      230,173,613,448   dattorro input diffuser (~28 ms)
+  //   branch_ap0..3     4 × 256           in-loop diffusion
+  //   tank0..3          4 × 6200          fdn delay lines
+  // total: 4800 + 1464 + 1024 + 24800 = 32088 of 32768
   typedef Engine::Reserve<4800,
+          Engine::Reserve<230,
+          Engine::Reserve<173,
+          Engine::Reserve<613,
+          Engine::Reserve<448,
           Engine::Reserve<256,
           Engine::Reserve<256,
           Engine::Reserve<256,
@@ -105,21 +119,27 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
           Engine::Reserve<6200,
           Engine::Reserve<6200,
           Engine::Reserve<6200,
-          Engine::Reserve<6200> > > > > > > > > Memory;
-  Engine::DelayLine<Memory, 0> pre_delay;
-  Engine::DelayLine<Memory, 1> ap0;
-  Engine::DelayLine<Memory, 2> ap1;
-  Engine::DelayLine<Memory, 3> ap2;
-  Engine::DelayLine<Memory, 4> ap3;
-  Engine::DelayLine<Memory, 5> del0;
-  Engine::DelayLine<Memory, 6> del1;
-  Engine::DelayLine<Memory, 7> del2;
-  Engine::DelayLine<Memory, 8> del3;
+          Engine::Reserve<6200> > > > > > > > > > > > > Memory;
+  Engine::DelayLine<Memory,  0> pre_delay;
+  Engine::DelayLine<Memory,  1> input_ap0;
+  Engine::DelayLine<Memory,  2> input_ap1;
+  Engine::DelayLine<Memory,  3> input_ap2;
+  Engine::DelayLine<Memory,  4> input_ap3;
+  Engine::DelayLine<Memory,  5> ap0;
+  Engine::DelayLine<Memory,  6> ap1;
+  Engine::DelayLine<Memory,  7> ap2;
+  Engine::DelayLine<Memory,  8> ap3;
+  Engine::DelayLine<Memory,  9> del0;
+  Engine::DelayLine<Memory, 10> del1;
+  Engine::DelayLine<Memory, 11> del2;
+  Engine::DelayLine<Memory, 12> del3;
   Engine::Context c;
 
   const float gain      = coef_input_gain_;
   const float pre       = coef_pre_delay_samples_;
-  const float kap       = coef_diffusion_;
+  const float kda       = coef_input_diff_a_;     // input ap pair 1
+  const float kdb       = coef_input_diff_b_;     // input ap pair 2
+  const float kap       = coef_branch_diff_;      // in-loop ap
   const float kfb       = coef_feedback_;
   const float khp       = coef_low_cut_hp_;
   const float lp_gain   = coef_tilt_lp_gain_;
@@ -151,6 +171,17 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
     c.Read(in_out->l + in_out->r, gain);
     c.Write(pre_delay, 0.0f);
     c.Interpolate(pre_delay, pre, LFO_1, 0.0f, 1.0f);
+
+    // ---- input diffuser: 4 series allpasses, dattorro alternating signs ----
+    c.Read(input_ap0 TAIL, -kda);
+    c.WriteAllPass(input_ap0, kda);
+    c.Read(input_ap1 TAIL, kda);
+    c.WriteAllPass(input_ap1, -kda);
+    c.Read(input_ap2 TAIL, -kdb);
+    c.WriteAllPass(input_ap2, kdb);
+    c.Read(input_ap3 TAIL, kdb);
+    c.WriteAllPass(input_ap3, -kdb);
+
     float wet_in;
     c.Write(wet_in, 0.0f);
 

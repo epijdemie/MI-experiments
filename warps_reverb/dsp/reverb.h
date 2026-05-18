@@ -57,7 +57,9 @@ class Reverb {
   // tick -> process cache
   float coef_input_gain_;
   float coef_pre_delay_samples_;
-  float coef_diffusion_;
+  float coef_input_diff_a_;       // dattorro-style input ap gains
+  float coef_input_diff_b_;
+  float coef_branch_diff_;        // in-loop ap gain
   float coef_feedback_;
   float coef_low_cut_hp_;
   float coef_tilt_lp_gain_;
