@@ -27,12 +27,13 @@ constexpr float kPreDelayMaxSamples = 2400.0f;  // 50 ms @ 48k
 constexpr float kStaticOffset[4] = { 0.0f, 13.0f, 27.0f, 39.0f };
 
 // chord harmonics: 4 pitch shifters at major 3rd / perfect 5th / major 7th /
-// major 9th. ratio - 1 = phase advance per sample (positive → pitch up)
+// major 9th. for pitch UP by ratio R, the read position must advance FASTER
+// than write, so delay shrinks → phase decreases by (R - 1) per sample
 constexpr float kChordRates[4] = {
-  0.25992f,    // 3rd  (5/4)
-  0.49831f,    // 5th  (3/2)
-  0.88775f,    // 7th  (15/8)
-  1.24492f,    // 9th  (9/4)
+  -0.25992f,   // 3rd  (5/4)
+  -0.49831f,   // 5th  (3/2)
+  -0.88775f,   // 7th  (15/8)
+  -1.24492f,   // 9th  (9/4)
 };
 
 // chord shifter input scale. 4 shifters × Hann pair (sums to 1) = unit RMS
@@ -253,7 +254,9 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
     int er1 = er0 - 1;
     if (er1 < 0) er1 += echo_n;
     const float echo_tail = echo[er0] + (echo[er1] - echo[er0]) * ed_f;
-    const float echo_mix  = pre_input + kecho * echo_tail;
+    // saturate the write back into the echo buffer — without this the loop
+    // can run away at high feedback (no bound) and feed Inf into the reverb
+    const float echo_mix  = SmoothSat(pre_input + kecho * echo_tail);
     echo[echo_w] = echo_mix;
     if (++echo_w >= echo_n) echo_w = 0;
 
@@ -292,13 +295,16 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
 
         chord_out += g1 * w1 + g2 * w2;
 
-        // advance phase by (ratio - 1) per sample - pitch up
+        // advance phase by -(ratio - 1) per sample → delay shrinks → pitch up.
+        // wrap when phase goes below 0
         *phases[i] += kChordRates[i];
+        while (*phases[i] < 0.0f)    *phases[i] += kGrain;
         while (*phases[i] >= kGrain) *phases[i] -= kGrain;
       }
     }
 
-    c.Load(echo_mix + chord_g * chord_out);
+    // saturate chord contribution too - shifters can sum loud in rare cases
+    c.Load(echo_mix + SmoothSat(chord_g * chord_out));
 
     // ---- input diffuser ----
     c.Read(input_ap0 TAIL, -kda);
