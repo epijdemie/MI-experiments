@@ -21,13 +21,27 @@ constexpr float kBaseDelay3 = 4421.0f;
 
 constexpr float kPreDelayMaxSamples = 2400.0f;  // 50 ms @ 48k
 
-// max chord-spread depth in samples per tank line. ±200 ≈ ±4 ms at 48k.
-// reservation headroom is 240 so this fits with margin
-constexpr float kMaxSpreadDepth = 200.0f;
+// max tank delay-line modulation swing - very small static offset to keep
+// the lines from being identical-length combs at extreme size settings.
+// budget 40 samples → reservation needs ≥ 40 extra per line
+constexpr float kStaticOffset[4] = { 0.0f, 13.0f, 27.0f, 39.0f };
 
-// 4 incommensurate slow lfo rates (Hz). periods ~5-14 s, mutually prime-ish
-// so lines never align - keeps the spread evolving without re-syncing
-constexpr float kSpreadRateHz[4] = { 0.073f, 0.097f, 0.131f, 0.181f };
+// chord harmonics: 4 pitch shifters at major 3rd / perfect 5th / major 7th /
+// major 9th. ratio - 1 = phase advance per sample (positive → pitch up)
+constexpr float kChordRates[4] = {
+  0.25992f,    // 3rd  (5/4)
+  0.49831f,    // 5th  (3/2)
+  0.88775f,    // 7th  (15/8)
+  1.24492f,    // 9th  (9/4)
+};
+
+// chord shifter input scale. 4 shifters × Hann pair (sums to 1) = unit RMS
+// per shifter; sum of 4 is ~2× RMS. scale down so wet_in isn't blown out
+constexpr float kChordMix = 0.25f;
+
+// echo delay range. 30 ms .. 200 ms (full buffer)
+constexpr float kEchoTimeMin = 1440.0f;     // 30 ms @ 48k
+constexpr float kEchoTimeMax = 9500.0f;     // ~198 ms (just under buffer)
 
 // matrix gain compensation. 1.0 lets the loop reach unity gain at decay=1.0
 // (cathedral / freeze territory). smoothsat bounds the loop — it asymptotes
@@ -83,11 +97,9 @@ void Reverb::Init(float* buffer, float sample_rate) {
   std::memset(echo_buffer_, 0, sizeof(echo_buffer_));
   echo_w_ = 0;
 
-  // stagger starting phases so lines don't all begin from zero
+  // stagger starting phases - keeps grains from re-aligning
   for (int i = 0; i < 4; ++i) {
-    lfo_phase_[i] = static_cast<float>(i) * 1.5707963f;
-    lfo_phase_inc_[i] =
-        2.0f * static_cast<float>(M_PI) * kSpreadRateHz[i] / sample_rate;
+    chord_phase_[i] = static_cast<float>(i) * 0.25f * kGrainSize;
   }
 
   parameters_.decay         = 0.5f;
@@ -95,7 +107,7 @@ void Reverb::Init(float* buffer, float sample_rate) {
   parameters_.size          = 0.5f;
   parameters_.dry_wet       = 0.5f;
   parameters_.pre_delay     = 0.0f;
-  parameters_.diffusion     = 0.5f;
+  parameters_.echo_time     = 0.5f;
   parameters_.spread        = 0.1f;
   parameters_.low_cut       = 0.0f;
 
@@ -105,19 +117,24 @@ void Reverb::Init(float* buffer, float sample_rate) {
 void Reverb::Tick() {
   coef_input_gain_         = 0.5f;
   coef_pre_delay_samples_  = parameters_.pre_delay * kPreDelayMaxSamples;
-  coef_input_diff_a_       = 0.75f  * parameters_.diffusion;
-  coef_input_diff_b_       = 0.625f * parameters_.diffusion;
-  // in-loop ap is the ONLY diffuser inside the feedback loop - has to break
-  // up each tank line's modal resonances. higher gain (Schroeder-classic 0.7)
-  coef_branch_diff_        = 0.7f * parameters_.diffusion;
+  // diffusion is no longer a knob - fixed at 0.85 (full-ish dattorro).
+  // strong in-loop ap diffusion is required to kill modal ringing
+  constexpr float kDiffusionFixed = 0.85f;
+  coef_input_diff_a_       = 0.75f  * kDiffusionFixed;
+  coef_input_diff_b_       = 0.625f * kDiffusionFixed;
+  coef_branch_diff_        = 0.7f   * kDiffusionFixed;
   // decay knob: x*(2-x) curve so middle position already gives long tail.
   // 0.0→0, 0.5→0.75, 0.75→0.94, 1.0→1.0. saturator catches overshoot at top
   {
     const float d = parameters_.decay;
     coef_feedback_ = d * (2.0f - d);
   }
-  coef_spread_depth_       = parameters_.spread * kMaxSpreadDepth;
+  coef_chord_gain_         = parameters_.spread * kChordMix;
   coef_dry_wet_            = parameters_.dry_wet;
+
+  // echo time: linear knob → 30..200 ms in samples
+  coef_echo_delay_samples_ = kEchoTimeMin +
+      parameters_.echo_time * (kEchoTimeMax - kEchoTimeMin);
 
   // low_cut: 1-pole hp in each branch. 5..200 Hz log corner.
   // always slightly active so the loop can't accumulate DC
@@ -180,12 +197,18 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
   const float kfb       = coef_feedback_;
   const float khp       = coef_low_cut_hp_;
   const float kecho     = coef_echo_feedback_;
+  const float echo_dly  = coef_echo_delay_samples_;
+  const float chord_g   = coef_chord_gain_;
   const float wet       = coef_dry_wet_;
-  const float ampl      = coef_spread_depth_;
 
   // tape-echo state pulled into locals
   const int echo_n      = static_cast<int>(kEchoSize);
   int       echo_w      = echo_w_;
+
+  // chord-shifter phases
+  float cp0 = chord_phase_[0], cp1 = chord_phase_[1];
+  float cp2 = chord_phase_[2], cp3 = chord_phase_[3];
+  constexpr float kGrain = static_cast<float>(kGrainSize);
 
   const float size_k = 0.4f + 1.0f * parameters_.size;
   const float tau0 = kBaseDelay0 * size_k;
@@ -207,25 +230,7 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
   float* const t3 = tank_3_;  const int n3 = static_cast<int>(kTankSize3);
   int w0 = tank_w_[0], w1 = tank_w_[1], w2 = tank_w_[2], w3 = tank_w_[3];
 
-  float lfo_ph0 = lfo_phase_[0], lfo_ph1 = lfo_phase_[1];
-  float lfo_ph2 = lfo_phase_[2], lfo_ph3 = lfo_phase_[3];
-  const float lfo_inc0 = lfo_phase_inc_[0];
-  const float lfo_inc1 = lfo_phase_inc_[1];
-  const float lfo_inc2 = lfo_phase_inc_[2];
-  const float lfo_inc3 = lfo_phase_inc_[3];
-  constexpr float kTwoPi = 2.0f * static_cast<float>(M_PI);
-
   while (size--) {
-    // advance 4 slow lfos. 4 × sinf at 48k = 192k/s ≈ 6% CPU — affordable
-    lfo_ph0 += lfo_inc0; if (lfo_ph0 > kTwoPi) lfo_ph0 -= kTwoPi;
-    lfo_ph1 += lfo_inc1; if (lfo_ph1 > kTwoPi) lfo_ph1 -= kTwoPi;
-    lfo_ph2 += lfo_inc2; if (lfo_ph2 > kTwoPi) lfo_ph2 -= kTwoPi;
-    lfo_ph3 += lfo_inc3; if (lfo_ph3 > kTwoPi) lfo_ph3 -= kTwoPi;
-    const float lfo_v0 = sinf(lfo_ph0);
-    const float lfo_v1 = sinf(lfo_ph1);
-    const float lfo_v2 = sinf(lfo_ph2);
-    const float lfo_v3 = sinf(lfo_ph3);
-
     engine_.Start(&c);
 
     // ---- pre-delay ----
@@ -234,18 +239,66 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
     c.Interpolate(pre_delay, pre, 1.0f);
 
     // ---- tape echo (before input diffuser) ----
-    // read tail of echo buffer at full delay, mix with pre-delayed input,
-    // write back. each repeat then goes through the input diffuser + reverb
+    // read echo buffer at variable delay (echo_time knob), mix with pre-delayed
+    // input, write back. each repeat goes through input diffuser + reverb
     // → wash patterns evolve over time.
     float pre_input;
     c.Write(pre_input, 0.0f);
-    int echo_r = echo_w + 1;
-    if (echo_r >= echo_n) echo_r -= echo_n;
-    const float echo_tail = echo[echo_r];
+    // variable echo delay - linear interp read
+    const int   ed_i = static_cast<int>(echo_dly);
+    const float ed_f = echo_dly - static_cast<float>(ed_i);
+    int er0 = echo_w - ed_i - 1;
+    er0 %= echo_n;
+    if (er0 < 0) er0 += echo_n;
+    int er1 = er0 - 1;
+    if (er1 < 0) er1 += echo_n;
+    const float echo_tail = echo[er0] + (echo[er1] - echo[er0]) * ed_f;
     const float echo_mix  = pre_input + kecho * echo_tail;
     echo[echo_w] = echo_mix;
     if (++echo_w >= echo_n) echo_w = 0;
-    c.Load(echo_mix);
+
+    // ---- chord harmonics (4 pitch shifters reading from echo buffer) ----
+    // each shifter: two grain heads offset by kGrain/2, hann-windowed.
+    // grain reads are at delay = phase samples back from echo_w
+    float chord_out = 0.0f;
+    if (chord_g > 0.0f) {
+      // process all 4 shifters
+      float* phases[4] = { &cp0, &cp1, &cp2, &cp3 };
+      for (int i = 0; i < 4; ++i) {
+        const float p1 = *phases[i];
+        float p2 = p1 + kGrain * 0.5f;
+        if (p2 >= kGrain) p2 -= kGrain;
+
+        // linear-interp reads at delay = p1 / p2 samples back
+        auto grain_read = [&](float p) -> float {
+          const int p_i = static_cast<int>(p);
+          const float p_f = p - static_cast<float>(p_i);
+          int gr0 = echo_w - p_i - 1;
+          gr0 %= echo_n;
+          if (gr0 < 0) gr0 += echo_n;
+          int gr1 = gr0 - 1;
+          if (gr1 < 0) gr1 += echo_n;
+          return echo[gr0] + (echo[gr1] - echo[gr0]) * p_f;
+        };
+
+        const float g1 = grain_read(p1);
+        const float g2 = grain_read(p2);
+
+        // hann window: sin²(π * p / kGrain). pair sums to 1
+        const float a1 = static_cast<float>(M_PI) * p1 / kGrain;
+        const float a2 = static_cast<float>(M_PI) * p2 / kGrain;
+        const float s1 = sinf(a1); const float w1 = s1 * s1;
+        const float s2 = sinf(a2); const float w2 = s2 * s2;
+
+        chord_out += g1 * w1 + g2 * w2;
+
+        // advance phase by (ratio - 1) per sample - pitch up
+        *phases[i] += kChordRates[i];
+        while (*phases[i] >= kGrain) *phases[i] -= kGrain;
+      }
+    }
+
+    c.Load(echo_mix + chord_g * chord_out);
 
     // ---- input diffuser ----
     c.Read(input_ap0 TAIL, -kda);
@@ -261,10 +314,13 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
     c.Write(wet_in, 0.0f);
 
     // ---- read tank lines (modulated, linear interp) ----
-    const float r0 = ReadTankLinear(t0, n0, w0, tau0 + ampl * lfo_v0);
-    const float r1 = ReadTankLinear(t1, n1, w1, tau1 + ampl * lfo_v1);
-    const float r2 = ReadTankLinear(t2, n2, w2, tau2 + ampl * lfo_v2);
-    const float r3 = ReadTankLinear(t3, n3, w3, tau3 + ampl * lfo_v3);
+    // tank lines run at fixed delays. ap-in-loop + full hadamard handle
+    // modal diffusion; no lfo modulation needed (and the user hated the
+    // glide character)
+    const float r0 = ReadTankLinear(t0, n0, w0, tau0);
+    const float r1 = ReadTankLinear(t1, n1, w1, tau1);
+    const float r2 = ReadTankLinear(t2, n2, w2, tau2);
+    const float r3 = ReadTankLinear(t3, n3, w3, tau3);
 
     // ---- per-branch chain: in-loop ap on (wet_in + tank read),
     // then air-absorb lp, then low-cut hp ----
@@ -348,10 +404,8 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
   hpf_state_[2] = hp2; hpf_state_[3] = hp3;
   tank_w_[0] = w0; tank_w_[1] = w1;
   tank_w_[2] = w2; tank_w_[3] = w3;
-  lfo_phase_[0] = lfo_ph0;
-  lfo_phase_[1] = lfo_ph1;
-  lfo_phase_[2] = lfo_ph2;
-  lfo_phase_[3] = lfo_ph3;
+  chord_phase_[0] = cp0; chord_phase_[1] = cp1;
+  chord_phase_[2] = cp2; chord_phase_[3] = cp3;
   echo_w_ = echo_w;
 
   // peak: instant attack, ~150ms release

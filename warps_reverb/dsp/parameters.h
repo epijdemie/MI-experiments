@@ -18,11 +18,10 @@ struct ReverbParameters {
 
   // sculpt layer (shifted)
   float pre_delay;    // 0..50ms front-of-chain delay
-  float diffusion;    // input/output ap gain
-  float spread;       // chord-spread depth. 4 slow lfos at incommensurate
-                      // rates (0.07-0.18 Hz) detune the lines apart. at 0,
-                      // no movement; at 1, lines drift across ~5 ms range
-                      // independently → harmonic relationships open up
+  float echo_time;    // tape echo delay length, ~30..200ms
+  float spread;       // chord harmonics intensity. 4 granular pitch shifters
+                      // (3rd / 5th / 7th / 9th up) read from echo buffer,
+                      // sum into wet_in. 0 = off, 1 = full chord stack
   float low_cut;      // hp corner in fb path (kills sub buildup)
 };
 
