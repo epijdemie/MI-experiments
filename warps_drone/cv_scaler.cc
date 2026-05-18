@@ -3,6 +3,7 @@
 #include <algorithm>
 
 #include "stmlib/dsp/dsp.h"
+#include "stmlib/utils/random.h"
 
 namespace warps_drone {
 
@@ -22,24 +23,30 @@ inline float ClampUnit(float v) {
 //   0 PERF u | 1 PERF s | 2 KARPLUS u | 3 KARPLUS s
 //   4 REVERB u | 5 REVERB s | 6 OVERDRIVE u | 7 OVERDRIVE s
 
-// algo:  chord | mode | damping | modal mix | rev size | predelay | _ | _
+// Defaults below were captured from the developer's playing setup
+// (latest journal values dumped from flash sector 11). They give a
+// first boot that lands somewhere musical — MINOR chord, mid-warm
+// damping, smooth tube warmth, vintage vinyl color — instead of
+// silence on a random spread of zero/full positions.
+
+// algo:  chord | mode | damping | modal mix | rev size | predelay | drive | _
 constexpr float kAlgoDefaults[8]   = {
-    0.30f, 0.25f, 0.99f, 0.40f, 0.87f, 0.00f, 0.40f, 0.50f
+    0.41f, 0.19f, 0.75f, 0.86f, 0.89f, 0.84f, 0.00f, 0.25f
 };
 
-// param: pulse freq | _ | white/pink | _ | diffusion | smear | warmth | pickup
+// param: bass note | bass glide | bass weight | bass drive | diffusion | smear | warmth | bias
 constexpr float kParamDefaults[8]  = {
-    0.50f, 1.00f, 0.50f, 0.50f, 0.00f, 0.00f, 1.00f, 0.50f
+    0.55f, 0.00f, 0.28f, 0.06f, 0.81f, 0.75f, 1.00f, 0.51f
 };
 
-// lvl1:  octave | pitch (st) | ks lpf | _ | rev lp | rev drive | tone | _
+// lvl1:  octave | chord vol | ks lpf | Q | rev lp | rev drive | tone | vinyl flutter
 constexpr float kLvl1Defaults[8]   = {
-    0.60f, 0.50f, 0.85f, 0.50f, 0.40f, 0.00f, 1.00f, 0.00f
+    1.00f, 1.00f, 1.00f, 0.00f, 1.00f, 0.00f, 1.00f, 0.00f
 };
 
-// lvl2:  lpf | Q | noise floor | modal stiff | rev amt | shim rate | bias | vinyl
+// lvl2:  lpf | bass vol | noise floor | wht/pnk mix | rev amt | shim rate | vinyl | vinyl color
 constexpr float kLvl2Defaults[8]   = {
-    0.73f, 0.00f, 0.20f, 0.20f, 0.44f, 0.50f, 0.00f, 0.00f
+    0.86f, 0.37f, 0.65f, 0.22f, 1.00f, 0.29f, 0.27f, 0.34f
 };
 
 }  // namespace
@@ -47,6 +54,10 @@ constexpr float kLvl2Defaults[8]   = {
 void CvScaler::Init(const Settings* settings) {
   settings_ = settings;
   adc_.Init();
+  // Probe driver NOT initialised — PC8 stays in default mode (matches
+  // v1.2 hardware behaviour). Unpatched V/OCT inputs idle near 0 V
+  // with no probe-induced bias, so the user's calibration anchors
+  // around the right point.
   std::fill(&lp_state_[0], &lp_state_[ADC_LAST], 0.0f);
 
   // cv idles at ~0.5 adc - seed lpf so first blocks don't see a fake spike
@@ -64,8 +75,10 @@ void CvScaler::Init(const Settings* settings) {
     defaults[3][s] = kLvl2Defaults[s];
   }
 
-  // replay journal. PERF unshifted (slot 0) is not persisted - follows
-  // the live pot position, captured below
+  // replay journal — all 32 slots, including PERF unshifted (slot 0).
+  // Boot resumes the last persisted state exactly, regardless of where
+  // the knobs sit physically. Soft-takeover then catches the user's
+  // first knob movement on each slot before committing to it.
   struct FlashRecord {
     uint16_t magic;
     uint16_t slot_id;
@@ -83,9 +96,7 @@ void CvScaler::Init(const Settings* settings) {
            rec->slot_id  <  kNumSlots) {
       const int pot  = rec->slot_id / 8;
       const int slot = rec->slot_id % 8;
-      if (slot != 0) {
-        defaults[pot][slot] = rec->value;
-      }
+      defaults[pot][slot] = rec->value;
       ++rec;
     }
     flash_cursor_ = reinterpret_cast<uint32_t>(rec);
@@ -98,20 +109,37 @@ void CvScaler::Init(const Settings* settings) {
     flash_cursor_ = kSectorBase;
   }
 
-  // capture live pot positions for PERF unshifted slots. adc scan ~400µs;
-  // safe margin. codec not started yet
+  // Seed pot + CV LP state with the live readings so the first audio
+  // block doesn't see a fake spike. CVs especially: starting at 0.5
+  // would make the V/OCT cal Transform yield ~+45 semis and sweep
+  // down to settled over the first ~10 ms — audible as a pitch chirp
+  // that the saturator (if engaged) bursts on.
   adc_.Convert();
   for (volatile uint32_t i = 0; i < 100000; ++i) { __NOP(); }
-  defaults[0][0] = adc_.float_value(ADC_ALGORITHM_POT);
-  defaults[1][0] = adc_.float_value(ADC_PARAMETER_POT);
-  defaults[2][0] = adc_.float_value(ADC_LEVEL_1_POT);
-  defaults[3][0] = adc_.float_value(ADC_LEVEL_2_POT);
+  lp_state_[ADC_ALGORITHM_POT] = adc_.float_value(ADC_ALGORITHM_POT);
+  lp_state_[ADC_PARAMETER_POT] = adc_.float_value(ADC_PARAMETER_POT);
+  lp_state_[ADC_LEVEL_1_POT]   = adc_.float_value(ADC_LEVEL_1_POT);
+  lp_state_[ADC_LEVEL_2_POT]   = adc_.float_value(ADC_LEVEL_2_POT);
+  lp_state_[ADC_ALGORITHM_CV]  = adc_.float_value(ADC_ALGORITHM_CV);
+  lp_state_[ADC_PARAMETER_CV]  = adc_.float_value(ADC_PARAMETER_CV);
+  lp_state_[ADC_LEVEL_1_CV]    = adc_.float_value(ADC_LEVEL_1_CV);
+  lp_state_[ADC_LEVEL_2_CV]    = adc_.float_value(ADC_LEVEL_2_CV);
 
-  // seed lpf with live pot reading - no first-block transient
-  lp_state_[ADC_ALGORITHM_POT] = defaults[0][0];
-  lp_state_[ADC_PARAMETER_POT] = defaults[1][0];
-  lp_state_[ADC_LEVEL_1_POT]   = defaults[2][0];
-  lp_state_[ADC_LEVEL_2_POT]   = defaults[3][0];
+  // Compute the boot V/OCT zero-offsets — Transform of the idle ADC
+  // captures any cal-vs-runtime mismatch (e.g. cal was anchored under
+  // a different probe state than the one we run with), so subtracting
+  // them at runtime keeps idle CV at 0 semis. Re-derived only on boot.
+  if (settings_) {
+    boot_offset_chord_semis_ =
+        settings_->calibration_chord().Transform(lp_state_[ADC_LEVEL_1_CV]);
+    boot_offset_bass_semis_ =
+        settings_->calibration_bass() .Transform(lp_state_[ADC_PARAMETER_CV]);
+  }
+  // Seed the second-stage V/OCT LP at exactly the boot offset point
+  // (which is "idle ⇒ 0 semis"), so the first audio block doesn't see
+  // a transient ramp from 0.
+  voct_chord_lp_ = 0.0f;
+  voct_bass_lp_  = 0.0f;
 
   algorithm_.Init(defaults[0]);
   timbre_   .Init(defaults[1]);
@@ -161,8 +189,9 @@ void CvScaler::Read(DroneParameters* p, ControlPage page, bool shifted) {
   level1_   .Process(lp_state_[ADC_LEVEL_1_POT],   slot);
   level2_   .Process(lp_state_[ADC_LEVEL_2_POT],   slot);
 
-  // PERF unshifted (slot 0) not persisted - would junk-fill the journal
-  if (slot != 0) {
+  // All slots persist — including PERF unshifted (slot 0) — so reboot
+  // resumes exactly where the last save left off.
+  {
     const float now_algo = algorithm_.committed(slot);
     const float now_prm  = timbre_   .committed(slot);
     const float now_l1   = level1_   .committed(slot);
@@ -199,36 +228,64 @@ void CvScaler::Read(DroneParameters* p, ControlPage page, bool shifted) {
 
   // cv bipolar around 0.5; +V drops the reading
   const float algo_cv   = 0.5f - lp_state_[ADC_ALGORITHM_CV];
-  const float timbre_cv = 0.5f - lp_state_[ADC_PARAMETER_CV];
   const float l2_cv     = 0.5f - lp_state_[ADC_LEVEL_2_CV];
-  // lvl1 cv = v/oct, raw (Drone does the semitone math)
-  const float l1_cv_raw = lp_state_[ADC_LEVEL_1_CV];
+  // lvl1 cv = chord v/oct, param cv = bass v/oct (raw; Drone does math)
+  const float l1_cv_raw    = lp_state_[ADC_LEVEL_1_CV];
+  const float param_cv_raw = lp_state_[ADC_PARAMETER_CV];
 
-  // PERF unshifted, +cv
-  p->chord         = ClampUnit(algorithm_.committed(Slot(PAGE_PERFORMANCE, false)) + algo_cv);
-  p->pulse_freq    = ClampUnit(timbre_   .committed(Slot(PAGE_PERFORMANCE, false)) + timbre_cv);
-  p->pitch_octave  = ClampUnit(level1_   .committed(Slot(PAGE_PERFORMANCE, false)));
-  p->lpf_cutoff    = ClampUnit(level2_   .committed(Slot(PAGE_PERFORMANCE, false)) + l2_cv);
+  // PERF unshifted
+  //   BIG    = chord density,   +ALGO_CV
+  //   SMALL  = bass_note (chord-tone zone snap, always)
+  //   LVL1   = chord octave selector (knob only — LVL1_CV adds semitones)
+  //   LVL2   = LPF cutoff,      +LVL2_CV
+  p->chord          = ClampUnit(algorithm_.committed(Slot(PAGE_PERFORMANCE, false)) + algo_cv);
+  p->bass_note      = ClampUnit(timbre_   .committed(Slot(PAGE_PERFORMANCE, false)));
+  p->pitch_octave   = ClampUnit(level1_   .committed(Slot(PAGE_PERFORMANCE, false)));
+  p->lpf_cutoff     = ClampUnit(level2_   .committed(Slot(PAGE_PERFORMANCE, false)) + l2_cv);
 
-  // calibrated v/oct -> semitones, piggybacked on reserved_a
-  p->reserved_a = settings_
-      ? settings_->calibration().Transform(l1_cv_raw)
-      : (0.5f - l1_cv_raw) * 120.0f;
+  // V/OCT semitones — always read through cal, with boot-time zero
+  // offset subtracted so idle CV maps to exactly 0 semis regardless
+  // of any cal-vs-runtime mismatch. A real +1 V cable still produces
+  // +12 semis (the offset is a constant shift, not a scale).
+  //
+  // After the cal/offset math, a slow LP further smooths the value so
+  // sub-semitone ADC jitter doesn't modulate the K-S delays /
+  // modal-bank fundamentals every block. Time constant ≈ 30 ms
+  // (sequencer step → ~30 ms portamento, otherwise inaudible).
+  constexpr float kVoctLp = 0.03f;
+  if (settings_) {
+    const float chord_target =
+        settings_->calibration_chord().Transform(l1_cv_raw) -
+        boot_offset_chord_semis_;
+    const float bass_target =
+        settings_->calibration_bass() .Transform(param_cv_raw) -
+        boot_offset_bass_semis_;
+    voct_chord_lp_ += kVoctLp * (chord_target - voct_chord_lp_);
+    voct_bass_lp_  += kVoctLp * (bass_target  - voct_bass_lp_);
+    p->chord_voct_semitones = voct_chord_lp_;
+    p->bass_voct_semitones  = voct_bass_lp_;
+  } else {
+    p->chord_voct_semitones = 0.0f;
+    p->bass_voct_semitones  = 0.0f;
+  }
 
   // PERF shifted
   p->chord_mode       = algorithm_.committed(Slot(PAGE_PERFORMANCE, true));
-  p->pulse_gain       = timbre_   .committed(Slot(PAGE_PERFORMANCE, true));
-  p->pitch            = level1_   .committed(Slot(PAGE_PERFORMANCE, true));
-  p->filter_resonance = level2_   .committed(Slot(PAGE_PERFORMANCE, true));
+  p->bass_glide       = timbre_   .committed(Slot(PAGE_PERFORMANCE, true));
+  p->chord_volume     = level1_   .committed(Slot(PAGE_PERFORMANCE, true));
+  p->bass_volume      = level2_   .committed(Slot(PAGE_PERFORMANCE, true));
 
   // KARPLUS unshifted: damping | white/pink | ks lpf | noise floor
   // shifted ALGO = modal mix; other shifted slots inert (modal params
   // hardcoded in Drone::Init)
   p->damping          = algorithm_.committed(Slot(PAGE_KARPLUS,     false));
-  p->white_pink_mix   = timbre_   .committed(Slot(PAGE_KARPLUS,     false));
+  p->bass_weight      = timbre_   .committed(Slot(PAGE_KARPLUS,     false));
   p->karplus_lpf      = level1_   .committed(Slot(PAGE_KARPLUS,     false));
   p->noise_floor_base = level2_   .committed(Slot(PAGE_KARPLUS,     false));
   p->harmonics        = algorithm_.committed(Slot(PAGE_KARPLUS,     true));
+  p->bass_drive       = timbre_   .committed(Slot(PAGE_KARPLUS,     true));
+  p->filter_resonance = level1_   .committed(Slot(PAGE_KARPLUS,     true));
+  p->white_pink_mix   = level2_   .committed(Slot(PAGE_KARPLUS,     true));
 
   // REVERB:  size | diffusion | lp | amount  (unshifted)
   //          predelay | smear | drive | shim_rate  (shifted)
@@ -247,7 +304,9 @@ void CvScaler::Read(DroneParameters* p, ControlPage page, bool shifted) {
   p->distortion_warmth = timbre_   .committed(Slot(PAGE_OVERDRIVE, false));
   p->distortion_tone   = level1_   .committed(Slot(PAGE_OVERDRIVE, false));
   p->vinyl_noise       = level2_   .committed(Slot(PAGE_OVERDRIVE, false));
-  p->distortion_bias   = level2_   .committed(Slot(PAGE_OVERDRIVE, true));
+  p->distortion_bias   = timbre_   .committed(Slot(PAGE_OVERDRIVE, true));
+  p->vinyl_color       = level2_   .committed(Slot(PAGE_OVERDRIVE, true));
+  p->vinyl_flutter     = level1_   .committed(Slot(PAGE_OVERDRIVE, true));
 
   adc_.Convert();
 }
@@ -326,7 +385,8 @@ void CvScaler::MaybeSave() {
 }
 
 void CvScaler::DetectAudioNormalization(warps::Codec::Frame*, size_t) {
-  // stub - audio inputs handled in Drone
+  // No cable detection — trigger detection (slope-based, in Drone) runs
+  // unconditionally on the audio inputs.
 }
 
 }  // namespace warps_drone

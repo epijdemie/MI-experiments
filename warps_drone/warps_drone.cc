@@ -59,7 +59,9 @@ void FillBuffer(warps::Codec::Frame* input,
   cv_scaler.Read(drone.mutable_parameters(), ui.page(), ui.shifted());
   ui.Poll();
 
-  // IN L -> ks excitation. IN R unused
+  // IN L -> chord K-S exciter (when patched). IN R -> bass K-S exciter
+  // (when patched). Normalization probe lives in cv_scaler — unpatched
+  // means the internal pulse-osc continues to drive the network.
   for (size_t i = 0; i < n; ++i) {
     scratch[i].l = input[i].l * kIntToFloat;
     scratch[i].r = input[i].r * kIntToFloat;
@@ -113,8 +115,11 @@ void FillBuffer(warps::Codec::Frame* input,
   }
 
   const float output_gain = drone.output_gain();
+  const float* vinyl = drone.vinyl_buf();
 
-  // crossfade SoftLimit out as dist rises - saturator already bounds
+  // crossfade SoftLimit out as dist rises - saturator already bounds.
+  // Vinyl noise is summed AFTER all non-linear stages (SoftLimit + the
+  // dist crossfade) — purely additive at the output.
   float peak = 0.0f;
   for (size_t i = 0; i < n; ++i) {
     float l = scratch[i].l * output_gain;
@@ -123,6 +128,8 @@ void FillBuffer(warps::Codec::Frame* input,
     const float sl_r = SoftLimit(r);
     l = sl_l + (l - sl_l) * dist;
     r = sl_r + (r - sl_r) * dist;
+    l += vinyl[i] * output_gain;
+    r += vinyl[i] * output_gain;
     float a = l > 0 ? l : -l;
     float b = r > 0 ? r : -r;
     if (a > peak) peak = a;
@@ -136,8 +143,9 @@ void FillBuffer(warps::Codec::Frame* input,
 }
 
 void Init() {
-  // sys.Init(false) - no VTOR offset (link at 0x08000000, no bootloader)
-  sys.Init(false);
+  // sys.Init(true) — VTOR offset to APPLICATION_LARGE (0x08008000).
+  // Émilie's QPSK WAV bootloader lives at 0x08000000 (sectors 0+1).
+  sys.Init(true);
   version.Init();
 
   settings.Init();

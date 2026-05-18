@@ -48,3 +48,6 @@ build
 
 # Per-project handover notes (contain personal context)
 HANDOVER.md
+
+# warps_drone — historical build archive (local-only)
+warps_drone/builds_archive/

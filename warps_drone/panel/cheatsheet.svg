@@ -1,235 +1,392 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-  Panel cheatsheet for warps_drone — page-based drone fw.
-  Left half = printable 10 HP sticker overlay (panel labels).
-  Right half = off-panel reference (big readable type).
-
-  Update whenever cv_scaler.cc dispatch lines or the chord zone
-  widths change. Knob nicknames: Big (algorithm_), Small (timbre_),
-  LVL 1 and LVL 2 (the trimmers).
+  Panel cheatsheet for WARPS DRONES firmware.
+  Left  = printable 10 HP sticker overlay (panel labels).
+  Right = off-panel reference card.
+  Update when cv_scaler.cc dispatch changes.
+  Printer-friendly: white background, dark ink.
 -->
 <svg xmlns="http://www.w3.org/2000/svg"
-     width="220mm" height="180mm"
-     viewBox="0 0 220 180"
-     font-family="-apple-system, 'Helvetica Neue', Arial, sans-serif">
+     width="220mm" height="160mm"
+     viewBox="0 0 220 160">
 
-  <!-- ============================================================ -->
-  <!-- panel base (10 HP sticker area)                              -->
-  <!-- ============================================================ -->
-  <rect x="0" y="0" width="50.5" height="128.5"
-        fill="#0a0a0a" stroke="#000" stroke-width="0.2"/>
+  <defs>
+    <style>
+      .sans { font-family: "Inter Tight", "Helvetica Neue", "Arial", sans-serif; }
+      .mono { font-family: "SF Mono", "Menlo", ui-monospace, monospace;
+              font-feature-settings: "tnum"; letter-spacing: -0.01em; }
+    </style>
+    <radialGradient id="panelGloss" cx="50%" cy="35%" r="60%">
+      <stop offset="0%"   stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#f0ece4"/>
+    </radialGradient>
 
-  <g fill="#1a1a1a">
-    <circle cx="3.0"  cy="3.0"   r="1.5"/>
-    <circle cx="47.5" cy="3.0"   r="1.5"/>
-    <circle cx="3.0"  cy="125.5" r="1.5"/>
-    <circle cx="47.5" cy="125.5" r="1.5"/>
+    <g id="knobBig">
+      <circle r="5.2" fill="#ffffff" stroke="#2a2724" stroke-width="0.35"/>
+      <circle r="4.5" fill="#ffffff" stroke="#7a7066" stroke-width="0.18"/>
+      <line x1="0" y1="0" x2="0" y2="-3.8"
+            stroke="#1a1715" stroke-width="0.45" stroke-linecap="round"/>
+    </g>
+    <g id="knobSmall">
+      <circle r="3.4" fill="#ffffff" stroke="#2a2724" stroke-width="0.3"/>
+      <circle r="2.9" fill="#ffffff" stroke="#7a7066" stroke-width="0.15"/>
+      <line x1="0" y1="0" x2="0" y2="-2.4"
+            stroke="#1a1715" stroke-width="0.35" stroke-linecap="round"/>
+    </g>
+    <g id="knobTrim">
+      <circle r="2.4" fill="#ffffff" stroke="#2a2724" stroke-width="0.25"/>
+      <circle r="1.9" fill="#ffffff" stroke="#7a7066" stroke-width="0.12"/>
+      <line x1="0" y1="0" x2="0" y2="-1.6"
+            stroke="#1a1715" stroke-width="0.3" stroke-linecap="round"/>
+    </g>
+  </defs>
+
+  <rect x="0" y="0" width="220" height="160" fill="#ffffff"/>
+
+  <!-- =========================================================== -->
+  <!--  LEFT: 10 HP panel sticker                                   -->
+  <!-- =========================================================== -->
+  <g transform="translate(2.5, 1.5)">
+    <rect x="0" y="0" width="50.5" height="128.5" rx="0.6"
+          fill="url(#panelGloss)" stroke="#1a1715" stroke-width="0.2"/>
+    <g fill="#1a1715" opacity="0.35">
+      <circle cx="3.0"  cy="3.0"   r="1.35"/>
+      <circle cx="47.5" cy="3.0"   r="1.35"/>
+      <circle cx="3.0"  cy="125.5" r="1.35"/>
+      <circle cx="47.5" cy="125.5" r="1.35"/>
+    </g>
+
+    <text x="25.25" y="6.8" class="sans" font-size="3.0" font-weight="800"
+          fill="#1a1715" text-anchor="middle" letter-spacing="0.8">DRONES</text>
+    <text x="25.25" y="9.8" class="mono" font-size="1.5"
+          fill="#6e6457" text-anchor="middle" letter-spacing="0.35">warps · v1.2</text>
+    <line x1="3.5" y1="11.5" x2="47" y2="11.5"
+          stroke="#b8b0a4" stroke-width="0.15"/>
+
+    <g transform="translate(25.25, 33.5)">
+      <circle r="11.2" fill="#ffffff" stroke="#2a2724" stroke-width="0.4"/>
+      <circle r="9.7"  fill="#ffffff" stroke="#7a7066" stroke-width="0.2"/>
+      <circle r="9.0"  fill="none" stroke="#cfc8bc" stroke-width="0.15"/>
+      <line x1="0" y1="0" x2="0" y2="-8.8"
+            stroke="#1a1715" stroke-width="0.6" stroke-linecap="round"/>
+    </g>
+    <text x="25.25" y="50.6" class="sans" font-size="3.0" font-weight="700"
+          fill="#1a1715" text-anchor="middle" letter-spacing="0.5">BIG</text>
+    <text x="25.25" y="53.4" class="mono" font-size="1.3"
+          fill="#6e6457" text-anchor="middle">page • +shift</text>
+
+    <line x1="3.5" y1="57.5" x2="47" y2="57.5"
+          stroke="#b8b0a4" stroke-width="0.15"/>
+
+    <circle cx="9.5"  cy="65.5" r="2.3" fill="#ffffff" stroke="#2a2724" stroke-width="0.25"/>
+    <circle cx="9.5"  cy="65.5" r="1.7" fill="#ffffff" stroke="#7a7066" stroke-width="0.15"/>
+    <circle cx="13.9" cy="64"   r="0.8" fill="#ff9a30"/>
+    <circle cx="13.9" cy="64"   r="1.4" fill="#ff9a30" opacity="0.22"/>
+    <text x="9.5" y="71.0" class="sans" font-size="1.5" font-weight="700"
+          fill="#1a1715" text-anchor="middle">BUTTON</text>
+    <text x="9.5" y="73.0" class="mono" font-size="1.1"
+          fill="#b06820" text-anchor="middle">tap·page</text>
+    <text x="9.5" y="74.6" class="mono" font-size="1.1"
+          fill="#3a7aa0" text-anchor="middle">hold·shift</text>
+
+    <g transform="translate(33, 65.5)">
+      <circle r="5.6" fill="#ffffff" stroke="#2a2724" stroke-width="0.3"/>
+      <circle r="4.7" fill="#ffffff" stroke="#7a7066" stroke-width="0.18"/>
+      <line x1="0" y1="0" x2="0" y2="-4.1"
+            stroke="#1a1715" stroke-width="0.45" stroke-linecap="round"/>
+    </g>
+    <text x="33" y="74.0" class="sans" font-size="2.4" font-weight="700"
+          fill="#1a1715" text-anchor="middle" letter-spacing="0.3">SMALL</text>
+    <text x="33" y="76.4" class="mono" font-size="1.2"
+          fill="#6e6457" text-anchor="middle">page • +shift</text>
+
+    <g>
+      <g transform="translate(11, 85.5)">
+        <circle r="2.9" fill="#ffffff" stroke="#2a2724" stroke-width="0.25"/>
+        <circle r="2.3" fill="#ffffff" stroke="#7a7066" stroke-width="0.15"/>
+        <line x1="0" y1="0" x2="0" y2="-2.2" stroke="#1a1715" stroke-width="0.35" stroke-linecap="round"/>
+      </g>
+      <g transform="translate(20.5, 85.5)">
+        <circle r="2.9" fill="#ffffff" stroke="#2a2724" stroke-width="0.25"/>
+        <circle r="2.3" fill="#ffffff" stroke="#7a7066" stroke-width="0.15"/>
+        <line x1="0" y1="0" x2="0" y2="-2.2" stroke="#1a1715" stroke-width="0.35" stroke-linecap="round"/>
+      </g>
+      <text x="11"   y="91.6" class="sans" font-size="1.8" font-weight="700"
+            fill="#1a1715" text-anchor="middle" letter-spacing="0.3">LVL 1</text>
+      <text x="20.5" y="91.6" class="sans" font-size="1.8" font-weight="700"
+            fill="#1a1715" text-anchor="middle" letter-spacing="0.3">LVL 2</text>
+    </g>
+
+    <line x1="3.5" y1="96" x2="47" y2="96"
+          stroke="#cfc8bc" stroke-width="0.15"/>
+
+    <!-- CV jacks -->
+    <g>
+      <g transform="translate(8, 103)">
+        <circle r="2.5" fill="#ffffff" stroke="#3a7aa0" stroke-width="0.3"/>
+        <circle r="1.0" fill="#ffffff" stroke="#1a1715" stroke-width="0.2"/>
+        <text x="0" y="-3.7" class="mono" font-size="1.4" font-weight="700"
+              fill="#3a7aa0" text-anchor="middle">PITCH</text>
+        <text x="0" y="-2.3" class="mono" font-size="0.95"
+              fill="#6e6457" text-anchor="middle">v/oct</text>
+      </g>
+      <g transform="translate(19, 103)">
+        <circle r="2.5" fill="#ffffff" stroke="#6e6457" stroke-width="0.3"/>
+        <circle r="1.0" fill="#ffffff" stroke="#1a1715" stroke-width="0.2"/>
+        <text x="0" y="-3.7" class="mono" font-size="1.4" font-weight="700"
+              fill="#1a1715" text-anchor="middle">LPF</text>
+        <text x="0" y="-2.3" class="mono" font-size="0.95"
+              fill="#6e6457" text-anchor="middle">cv</text>
+      </g>
+      <g transform="translate(30, 103)">
+        <circle r="2.5" fill="#ffffff" stroke="#6e6457" stroke-width="0.3"/>
+        <circle r="1.0" fill="#ffffff" stroke="#1a1715" stroke-width="0.2"/>
+        <text x="0" y="-3.7" class="mono" font-size="1.4" font-weight="700"
+              fill="#1a1715" text-anchor="middle">CHORD</text>
+        <text x="0" y="-2.3" class="mono" font-size="0.95"
+              fill="#6e6457" text-anchor="middle">cv</text>
+      </g>
+      <g transform="translate(41, 103)">
+        <circle r="2.5" fill="#ffffff" stroke="#6e6457" stroke-width="0.3"/>
+        <circle r="1.0" fill="#ffffff" stroke="#1a1715" stroke-width="0.2"/>
+        <text x="0" y="-3.7" class="mono" font-size="1.4" font-weight="700"
+              fill="#1a1715" text-anchor="middle">BASS</text>
+        <text x="0" y="-2.3" class="mono" font-size="0.95"
+              fill="#6e6457" text-anchor="middle">cv</text>
+      </g>
+    </g>
+
+    <!-- Audio jacks -->
+    <g>
+      <g transform="translate(8, 115)">
+        <circle r="2.5" fill="#ffffff" stroke="#3a7aa0" stroke-width="0.35"/>
+        <circle r="1.0" fill="#ffffff" stroke="#1a1715" stroke-width="0.2"/>
+        <text x="0" y="4.6" class="mono" font-size="1.4" font-weight="700"
+              fill="#3a7aa0" text-anchor="middle">EXCITE</text>
+        <text x="0" y="6.1" class="mono" font-size="0.95"
+              fill="#6e6457" text-anchor="middle">audio in</text>
+      </g>
+      <g transform="translate(19, 115)">
+        <circle r="2.5" fill="#ffffff" stroke="#b8b0a4" stroke-width="0.3"/>
+        <circle r="1.0" fill="#ffffff" stroke="#9a9590" stroke-width="0.18"/>
+        <text x="0" y="4.6" class="mono" font-size="1.4" font-weight="700"
+              fill="#9a9590" text-anchor="middle">N/C</text>
+        <text x="0" y="6.1" class="mono" font-size="0.95"
+              fill="#b8b0a4" text-anchor="middle">unused</text>
+      </g>
+      <g transform="translate(30, 115)">
+        <circle r="2.5" fill="#ffffff" stroke="#b08930" stroke-width="0.35"/>
+        <circle r="1.0" fill="#ffffff" stroke="#1a1715" stroke-width="0.2"/>
+        <text x="0" y="5.4" class="mono" font-size="1.6" font-weight="700"
+              fill="#b08930" text-anchor="middle">OUT L</text>
+      </g>
+      <g transform="translate(41, 115)">
+        <circle r="2.5" fill="#ffffff" stroke="#b08930" stroke-width="0.35"/>
+        <circle r="1.0" fill="#ffffff" stroke="#1a1715" stroke-width="0.2"/>
+        <text x="0" y="5.4" class="mono" font-size="1.6" font-weight="700"
+              fill="#b08930" text-anchor="middle">OUT R</text>
+      </g>
+    </g>
+
+    <line x1="3.5" y1="123" x2="47" y2="123"
+          stroke="#cfc8bc" stroke-width="0.15"/>
   </g>
 
-  <text x="25.25" y="6.5" font-size="2.8" font-weight="700"
-        fill="#fff" text-anchor="middle" letter-spacing="0.4">DRONE</text>
-  <text x="25.25" y="9.8" font-size="1.7" fill="#888"
-        text-anchor="middle" letter-spacing="0.5">karplus fw</text>
-  <line x1="3" y1="11.5" x2="47.5" y2="11.5" stroke="#444" stroke-width="0.15"/>
+  <!-- =========================================================== -->
+  <!--  RIGHT: reference card                                       -->
+  <!-- =========================================================== -->
+  <g transform="translate(58, 1.5)">
 
-  <!-- Big knob -->
-  <circle cx="25.25" cy="33" r="11" fill="#1a1a1a" stroke="#fff" stroke-width="0.3"/>
-  <circle cx="25.25" cy="33" r="9.5" fill="#fafafa"/>
-  <line x1="25.25" y1="33" x2="25.25" y2="24.5" stroke="#000" stroke-width="0.5" stroke-linecap="round"/>
-  <text x="25.25" y="49.5" font-size="3.2" font-weight="700"
-        fill="#fff" text-anchor="middle" letter-spacing="0.3">BIG</text>
-  <text x="25.25" y="52.5" font-size="1.5" fill="#888" text-anchor="middle">per-page • +shift</text>
+    <rect x="0" y="0" width="159" height="155" rx="0.8"
+          fill="#ffffff" stroke="#cfc8bc" stroke-width="0.18"/>
 
-  <!-- Button + OSC LED -->
-  <circle cx="9.5"  cy="65" r="2.2" fill="#fafafa" stroke="#fff" stroke-width="0.2"/>
-  <circle cx="13.8" cy="63.5" r="0.7" fill="#ff8400"/>
-  <text x="9.5" y="69.5" font-size="1.6" font-weight="700"
-        fill="#fff" text-anchor="middle">BUTTON</text>
-  <text x="9.5" y="71.5" font-size="1.2" fill="#ffae40" text-anchor="middle">tap = page</text>
-  <text x="9.5" y="73.2" font-size="1.2" fill="#7fc8ff" text-anchor="middle">hold = shift</text>
+    <text x="3" y="8.4" class="sans" font-size="6.4" font-weight="800"
+          fill="#1a1715" letter-spacing="0.5">WARPS DRONES</text>
+    <text x="3" y="13.0" class="mono" font-size="2.2"
+          fill="#6e6457">4 pages · 4 knobs · chord + bass drone</text>
+    <text x="156" y="8.4" class="mono" font-size="2.6" fill="#6e6457"
+          text-anchor="end">tap = next page</text>
+    <text x="156" y="12.0" class="mono" font-size="2.6" fill="#6e6457"
+          text-anchor="end">hold = shift</text>
 
-  <!-- Small knob -->
-  <circle cx="33" cy="65" r="5.5" fill="#1a1a1a" stroke="#fff" stroke-width="0.25"/>
-  <circle cx="33" cy="65" r="4.5" fill="#fafafa"/>
-  <line x1="33" y1="65" x2="33" y2="61" stroke="#000" stroke-width="0.4" stroke-linecap="round"/>
-  <text x="33" y="74" font-size="2.5" font-weight="700"
-        fill="#fff" text-anchor="middle">SMALL</text>
-  <text x="33" y="76.7" font-size="1.4" fill="#888" text-anchor="middle">per-page • +shift</text>
-
-  <!-- LEVEL 1 + LEVEL 2 trimmers -->
-  <circle cx="11"   cy="85" r="2.8" fill="#1a1a1a" stroke="#fff" stroke-width="0.2"/>
-  <circle cx="11"   cy="85" r="2.2" fill="#fafafa"/>
-  <line x1="11" y1="85" x2="11" y2="82.8" stroke="#000" stroke-width="0.3" stroke-linecap="round"/>
-
-  <circle cx="20.5" cy="85" r="2.8" fill="#1a1a1a" stroke="#fff" stroke-width="0.2"/>
-  <circle cx="20.5" cy="85" r="2.2" fill="#fafafa"/>
-  <line x1="20.5" y1="85" x2="20.5" y2="82.8" stroke="#000" stroke-width="0.3" stroke-linecap="round"/>
-
-  <text x="11"   y="91" font-size="1.9" font-weight="700" fill="#fff" text-anchor="middle">LVL 1</text>
-  <text x="20.5" y="91" font-size="1.9" font-weight="700" fill="#fff" text-anchor="middle">LVL 2</text>
-
-  <line x1="3" y1="96" x2="47.5" y2="96" stroke="#444" stroke-width="0.15"/>
-
-  <!-- CV jacks -->
-  <g>
-    <circle cx="8"  cy="103" r="2.4" fill="#1a1a1a" stroke="#7fc8ff" stroke-width="0.2"/>
-    <circle cx="8"  cy="103" r="1.0" fill="#0a0a0a"/>
-    <text x="8"  y="99.4"  font-size="1.5" fill="#7fc8ff" text-anchor="middle" font-weight="700">PITCH</text>
-    <text x="8"  y="101"   font-size="1.0" fill="#888"    text-anchor="middle">V/oct</text>
-
-    <circle cx="19" cy="103" r="2.4" fill="#1a1a1a" stroke="#888" stroke-width="0.2"/>
-    <circle cx="19" cy="103" r="1.0" fill="#0a0a0a"/>
-    <text x="19" y="99.4"  font-size="1.5" fill="#fff" text-anchor="middle" font-weight="700">LPF</text>
-    <text x="19" y="101"   font-size="1.0" fill="#888" text-anchor="middle">CV</text>
-
-    <circle cx="30" cy="103" r="2.4" fill="#1a1a1a" stroke="#888" stroke-width="0.2"/>
-    <circle cx="30" cy="103" r="1.0" fill="#0a0a0a"/>
-    <text x="30" y="99.4"  font-size="1.5" fill="#fff" text-anchor="middle" font-weight="700">CHORD</text>
-    <text x="30" y="101"   font-size="1.0" fill="#888" text-anchor="middle">CV</text>
-
-    <circle cx="41" cy="103" r="2.4" fill="#1a1a1a" stroke="#888" stroke-width="0.2"/>
-    <circle cx="41" cy="103" r="1.0" fill="#0a0a0a"/>
-    <text x="41" y="99.4"  font-size="1.5" fill="#fff" text-anchor="middle" font-weight="700">PULSE</text>
-    <text x="41" y="101"   font-size="1.0" fill="#888" text-anchor="middle">CV</text>
-  </g>
-
-  <!-- Audio jacks -->
-  <g>
-    <circle cx="8"  cy="115" r="2.4" fill="#1a1a1a" stroke="#7fc8ff" stroke-width="0.25"/>
-    <circle cx="8"  cy="115" r="1.0" fill="#0a0a0a"/>
-    <text x="8"  y="119.3" font-size="1.5" fill="#7fc8ff" text-anchor="middle" font-weight="700">EXCITE</text>
-    <text x="8"  y="121"   font-size="1.0" fill="#888"    text-anchor="middle">audio</text>
-
-    <circle cx="19" cy="115" r="2.4" fill="#1a1a1a" stroke="#ff9030" stroke-width="0.25"/>
-    <circle cx="19" cy="115" r="1.0" fill="#0a0a0a"/>
-    <text x="19" y="119.3" font-size="1.5" fill="#ff9030" text-anchor="middle" font-weight="700">TRIG</text>
-    <text x="19" y="121"   font-size="1.0" fill="#888"    text-anchor="middle">gate/lfo</text>
-
-    <circle cx="30" cy="115" r="2.4" fill="#1a1a1a" stroke="#ffd060" stroke-width="0.25"/>
-    <circle cx="30" cy="115" r="1.0" fill="#0a0a0a"/>
-    <text x="30" y="120.3" font-size="1.7" fill="#ffd060" text-anchor="middle" font-weight="700">OUT L</text>
-
-    <circle cx="41" cy="115" r="2.4" fill="#1a1a1a" stroke="#ffd060" stroke-width="0.25"/>
-    <circle cx="41" cy="115" r="1.0" fill="#0a0a0a"/>
-    <text x="41" y="120.3" font-size="1.7" fill="#ffd060" text-anchor="middle" font-weight="700">OUT R</text>
-  </g>
-
-  <line x1="3" y1="123" x2="47.5" y2="123" stroke="#444" stroke-width="0.15"/>
-
-  <!-- ============================================================ -->
-  <!-- off-panel page reference  (BIG TYPE)                         -->
-  <!-- ============================================================ -->
-  <g transform="translate(55, 0)">
-    <rect x="0" y="0" width="165" height="180" fill="#111" stroke="#222" stroke-width="0.2"/>
-
-    <text x="82.5" y="11" font-size="5.5" font-weight="700"
-          fill="#fff" text-anchor="middle" letter-spacing="0.6">PAGES</text>
-    <text x="82.5" y="16.5" font-size="2.4" fill="#888" text-anchor="middle">
-      tap to cycle • hold for shift layer
-    </text>
-    <line x1="3" y1="19" x2="162" y2="19" stroke="#333" stroke-width="0.2"/>
-
-    <!-- column headers -->
-    <g font-size="2.8" font-weight="700" fill="#aaa">
-      <text x="3"    y="24.5">PAGE</text>
-      <text x="44"   y="24.5">BIG</text>
-      <text x="76"   y="24.5">SMALL</text>
-      <text x="108"  y="24.5">LVL 1</text>
-      <text x="138"  y="24.5">LVL 2</text>
+    <!-- knob icons + column headers -->
+    <g>
+      <use href="#knobBig"   x="55"  y="22"/>
+      <text x="55" y="30.6" class="sans" font-size="2.6" font-weight="700"
+            fill="#1a1715" text-anchor="middle" letter-spacing="0.4">BIG</text>
+      <use href="#knobSmall" x="92"  y="22"/>
+      <text x="92" y="30.6" class="sans" font-size="2.6" font-weight="700"
+            fill="#1a1715" text-anchor="middle" letter-spacing="0.4">SMALL</text>
+      <use href="#knobTrim"  x="123" y="22"/>
+      <text x="123" y="30.6" class="sans" font-size="2.6" font-weight="700"
+            fill="#1a1715" text-anchor="middle" letter-spacing="0.4">LVL 1</text>
+      <use href="#knobTrim"  x="148" y="22"/>
+      <text x="148" y="30.6" class="sans" font-size="2.6" font-weight="700"
+            fill="#1a1715" text-anchor="middle" letter-spacing="0.4">LVL 2</text>
+      <text x="3" y="30.6" class="sans" font-size="2.6" font-weight="700"
+            fill="#6e6457" letter-spacing="0.4">PAGE</text>
     </g>
-    <line x1="3" y1="26.5" x2="162" y2="26.5" stroke="#333" stroke-width="0.15"/>
 
-    <!-- ───── PAGE 0 PERFORMANCE ───── -->
-    <rect x="3" y="30" width="5" height="20" fill="#222" stroke="#444" stroke-width="0.1"/>
-    <text x="11" y="35.5" font-size="2.9" font-weight="700" fill="#fff">PERFORMANCE</text>
-    <text x="11" y="39.0" font-size="1.8" fill="#888">unlit • live play</text>
-    <g font-size="2.5" fill="#fff">
-      <text x="44"  y="35.5">chord <tspan fill="#7fc8ff">+CV</tspan></text>
-      <text x="44"  y="40.0" fill="#7fc8ff">+ mode</text>
-      <text x="76"  y="35.5">pulse freq <tspan fill="#7fc8ff">+CV</tspan></text>
-      <text x="76"  y="40.0" fill="#7fc8ff">+ pulse gain</text>
-      <text x="108" y="35.5">octave <tspan fill="#7fc8ff">+V/oct</tspan></text>
-      <text x="108" y="40.0" fill="#7fc8ff">+ pitch (semi)</text>
-      <text x="138" y="35.5">LPF cut <tspan fill="#7fc8ff">+CV</tspan></text>
-      <text x="138" y="40.0" fill="#7fc8ff">+ resonance (Q)</text>
+    <!-- ─── PERFORMANCE ─── -->
+    <g transform="translate(0, 35)">
+      <rect x="3" y="0" width="153" height="18" rx="0.8"
+            fill="#1a1715" fill-opacity="0.03"
+            stroke="#1a1715" stroke-opacity="0.35" stroke-width="0.2"/>
+      <circle cx="7" cy="9" r="1.2" fill="none"
+              stroke="#1a1715" stroke-width="0.3"/>
+      <text x="10.5" y="10.4" class="sans" font-size="3.2" font-weight="700"
+            fill="#1a1715" letter-spacing="0.3">PERFORMANCE</text>
+      <text x="55" y="8.4" class="sans" font-size="2.6" font-weight="600"
+            fill="#1a1715" text-anchor="middle">density</text>
+      <text x="55" y="13.4" class="sans" font-size="2.4"
+            fill="#7a6f63" text-anchor="middle">+ bank</text>
+      <text x="92" y="8.4" class="sans" font-size="2.6" font-weight="600"
+            fill="#1a1715" text-anchor="middle">bass note</text>
+      <text x="92" y="13.4" class="sans" font-size="2.4"
+            fill="#7a6f63" text-anchor="middle">+ bass glide</text>
+      <text x="123" y="8.4" class="sans" font-size="2.6" font-weight="600"
+            fill="#1a1715" text-anchor="middle">octave</text>
+      <text x="123" y="13.4" class="sans" font-size="2.4"
+            fill="#7a6f63" text-anchor="middle">+ chord vol</text>
+      <text x="148" y="8.4" class="sans" font-size="2.6" font-weight="600"
+            fill="#1a1715" text-anchor="middle">LPF cut</text>
+      <text x="148" y="13.4" class="sans" font-size="2.4"
+            fill="#7a6f63" text-anchor="middle">+ bass vol</text>
     </g>
-    <line x1="3" y1="52" x2="162" y2="52" stroke="#333" stroke-width="0.15"/>
 
-    <!-- ───── PAGE 1 KARPLUS ───── -->
-    <rect x="3" y="55" width="5" height="20" fill="#00ff30" stroke="#444" stroke-width="0.1"/>
-    <text x="11" y="60.5" font-size="2.9" font-weight="700" fill="#fff">KARPLUS</text>
-    <text x="11" y="64.0" font-size="1.8" fill="#888">green • KS tone</text>
-    <g font-size="2.5" fill="#fff">
-      <text x="44"  y="60.5">damping</text>
-      <text x="44"  y="65.0" fill="#fff">+ harmonics (modal)</text>
-      <text x="76"  y="60.5">wht/pnk mix</text>
-      <text x="76"  y="65.0" fill="#fff">+ modal count</text>
-      <text x="108" y="60.5">ks LPF</text>
-      <text x="108" y="65.0" fill="#fff">+ modal pickup</text>
-      <text x="138" y="60.5">noise floor</text>
-      <text x="138" y="65.0" fill="#fff">+ modal stiffness</text>
+    <!-- ─── KARPLUS ─── -->
+    <g transform="translate(0, 56)">
+      <rect x="3" y="0" width="153" height="18" rx="0.8"
+            fill="#5fc680" fill-opacity="0.10"
+            stroke="#3d8a55" stroke-opacity="0.55" stroke-width="0.22"/>
+      <circle cx="7" cy="9" r="1.2" fill="#3d8a55"/>
+      <text x="10.5" y="10.4" class="sans" font-size="3.2" font-weight="700"
+            fill="#1a1715" letter-spacing="0.3">KARPLUS</text>
+      <text x="55" y="8.4" class="sans" font-size="2.6" font-weight="600"
+            fill="#1a1715" text-anchor="middle">damping</text>
+      <text x="55" y="13.4" class="sans" font-size="2.4"
+            fill="#3d8a55" text-anchor="middle">+ harmonics</text>
+      <text x="92" y="8.4" class="sans" font-size="2.6" font-weight="600"
+            fill="#1a1715" text-anchor="middle">bass weight</text>
+      <text x="92" y="13.4" class="sans" font-size="2.4"
+            fill="#3d8a55" text-anchor="middle">+ bass drive</text>
+      <text x="123" y="8.4" class="sans" font-size="2.6" font-weight="600"
+            fill="#1a1715" text-anchor="middle">ks LPF</text>
+      <text x="123" y="13.4" class="sans" font-size="2.4"
+            fill="#3d8a55" text-anchor="middle">+ Q</text>
+      <text x="148" y="8.4" class="sans" font-size="2.6" font-weight="600"
+            fill="#1a1715" text-anchor="middle">noise floor</text>
+      <text x="148" y="13.4" class="sans" font-size="2.4"
+            fill="#3d8a55" text-anchor="middle">+ noise color</text>
     </g>
-    <line x1="3" y1="77" x2="162" y2="77" stroke="#333" stroke-width="0.15"/>
 
-    <!-- ───── PAGE 2 REVERB ───── -->
-    <rect x="3" y="80" width="5" height="20" fill="#ff8400" stroke="#444" stroke-width="0.1"/>
-    <text x="11" y="85.5" font-size="2.9" font-weight="700" fill="#fff">REVERB</text>
-    <text x="11" y="89.0" font-size="1.8" fill="#888">orange • space</text>
-    <g font-size="2.5" fill="#fff">
-      <text x="44"  y="85.5">size</text>
-      <text x="44"  y="90.0" fill="#7fc8ff">+ predelay</text>
-      <text x="76"  y="85.5">diffusion</text>
-      <text x="76"  y="90.0" fill="#7fc8ff">+ smear</text>
-      <text x="108" y="85.5">HF damp</text>
-      <text x="108" y="90.0" fill="#7fc8ff">+ drive</text>
-      <text x="138" y="85.5">rev wet</text>
-      <text x="138" y="90.0" fill="#fff">+ chorus rate</text>
+    <!-- ─── REVERB ─── -->
+    <g transform="translate(0, 77)">
+      <rect x="3" y="0" width="153" height="18" rx="0.8"
+            fill="#ff9a30" fill-opacity="0.10"
+            stroke="#b06820" stroke-opacity="0.55" stroke-width="0.22"/>
+      <circle cx="7" cy="9" r="1.2" fill="#b06820"/>
+      <text x="10.5" y="10.4" class="sans" font-size="3.2" font-weight="700"
+            fill="#1a1715" letter-spacing="0.3">REVERB</text>
+      <text x="55" y="8.4" class="sans" font-size="2.6" font-weight="600"
+            fill="#1a1715" text-anchor="middle">size</text>
+      <text x="55" y="13.4" class="sans" font-size="2.4"
+            fill="#b06820" text-anchor="middle">+ predelay</text>
+      <text x="92" y="8.4" class="sans" font-size="2.6" font-weight="600"
+            fill="#1a1715" text-anchor="middle">diffusion</text>
+      <text x="92" y="13.4" class="sans" font-size="2.4"
+            fill="#b06820" text-anchor="middle">+ smear</text>
+      <text x="123" y="8.4" class="sans" font-size="2.6" font-weight="600"
+            fill="#1a1715" text-anchor="middle">HF damp</text>
+      <text x="123" y="13.4" class="sans" font-size="2.4"
+            fill="#b06820" text-anchor="middle">+ rev drive</text>
+      <text x="148" y="8.4" class="sans" font-size="2.6" font-weight="600"
+            fill="#1a1715" text-anchor="middle">wet</text>
+      <text x="148" y="13.4" class="sans" font-size="2.4"
+            fill="#b06820" text-anchor="middle">+ chorus rate</text>
     </g>
-    <line x1="3" y1="102" x2="162" y2="102" stroke="#333" stroke-width="0.15"/>
 
-    <!-- ───── PAGE 3 OVERDRIVE ───── -->
-    <rect x="3" y="105" width="5" height="20" fill="#ff0030" stroke="#444" stroke-width="0.1"/>
-    <text x="11" y="110.5" font-size="2.9" font-weight="700" fill="#fff">OVERDRIVE</text>
-    <text x="11" y="114.0" font-size="1.8" fill="#888">red • end-of-chain</text>
-    <g font-size="2.5" fill="#fff">
-      <text x="44"  y="110.5">drive</text>
-      <text x="44"  y="115.0" fill="#888">+ reserved</text>
-      <text x="76"  y="110.5">warmth</text>
-      <text x="76"  y="115.0" fill="#888">+ reserved</text>
-      <text x="108" y="110.5">tone</text>
-      <text x="108" y="115.0" fill="#888">+ reserved</text>
-      <text x="138" y="110.5">vinyl noise</text>
-      <text x="138" y="115.0" fill="#fff">+ bias</text>
+    <!-- ─── OVERDRIVE ─── -->
+    <g transform="translate(0, 98)">
+      <rect x="3" y="0" width="153" height="18" rx="0.8"
+            fill="#e84a4a" fill-opacity="0.10"
+            stroke="#a83030" stroke-opacity="0.55" stroke-width="0.22"/>
+      <circle cx="7" cy="9" r="1.2" fill="#a83030"/>
+      <text x="10.5" y="10.4" class="sans" font-size="3.2" font-weight="700"
+            fill="#1a1715" letter-spacing="0.3">OVERDRIVE</text>
+      <text x="55" y="8.4" class="sans" font-size="2.6" font-weight="600"
+            fill="#1a1715" text-anchor="middle">drive</text>
+      <text x="55" y="13.4" class="sans" font-size="2.4"
+            fill="#9a9590" text-anchor="middle">+ —</text>
+      <text x="92" y="8.4" class="sans" font-size="2.6" font-weight="600"
+            fill="#1a1715" text-anchor="middle">warmth</text>
+      <text x="92" y="13.4" class="sans" font-size="2.4"
+            fill="#a83030" text-anchor="middle">+ bias</text>
+      <text x="123" y="8.4" class="sans" font-size="2.6" font-weight="600"
+            fill="#1a1715" text-anchor="middle">tone</text>
+      <text x="123" y="13.4" class="sans" font-size="2.4"
+            fill="#a83030" text-anchor="middle">+ vinyl flutter</text>
+      <text x="148" y="8.4" class="sans" font-size="2.6" font-weight="600"
+            fill="#1a1715" text-anchor="middle">vinyl noise</text>
+      <text x="148" y="13.4" class="sans" font-size="2.4"
+            fill="#a83030" text-anchor="middle">+ vinyl color</text>
     </g>
-    <line x1="3" y1="127" x2="162" y2="127" stroke="#333" stroke-width="0.15"/>
 
-    <!-- ───── Chord stack zones ───── -->
-    <text x="3" y="132" font-size="2.4" font-weight="700" fill="#fff">Chord stack zones on BIG knob</text>
-    <g font-size="2.1" fill="#aaa">
-      <text x="3" y="136">0.00–0.03 <tspan fill="#fff">unison</tspan>  ·  0.03–0.40 <tspan fill="#fff">detune (phat)</tspan>  ·  0.40–0.55 <tspan fill="#fff">+3rd</tspan></text>
-      <text x="3" y="139.5">0.55–0.70 <tspan fill="#fff">+5th</tspan>  ·  0.70–0.85 <tspan fill="#fff">+7th</tspan>  ·  0.85–1.00 <tspan fill="#fff">+9th</tspan></text>
-      <text x="3" y="143">Modes (BIG + shift):  major / minor / dom7 / dim / sus2 / sus4</text>
-      <text x="3" y="146.5">Sub-osc: 3 saws at first 3 chord ratios, shifted −1 oct (hardcoded mix, follows BIG zones)</text>
+    <!-- ─── CHORD BANKS ─── -->
+    <g transform="translate(0, 122)">
+      <text x="3" y="0" class="sans" font-size="3.0" font-weight="700"
+            fill="#1a1715" letter-spacing="0.3">CHORD BANKS</text>
+      <text x="40" y="0" class="mono" font-size="2.0"
+            fill="#6e6457">BIG + shift · 6 zones</text>
+
+      <g transform="translate(3, 4)" class="mono" font-size="2.0" fill="#1a1715">
+        <g transform="translate(0,0)">
+          <rect x="0" y="-2.2" width="2.6" height="2.6" rx="0.3"
+                fill="#ffffff" stroke="#1a1715" stroke-width="0.3"/>
+          <text x="3.6" y="0" font-weight="700">DETUNE</text>
+        </g>
+        <g transform="translate(26,0)">
+          <rect x="0" y="-2.2" width="2.6" height="2.6" rx="0.3" fill="#4a78d6"/>
+          <text x="3.6" y="0" font-weight="700">MINOR</text>
+        </g>
+        <g transform="translate(50,0)">
+          <rect x="0" y="-2.2" width="2.6" height="2.6" rx="0.3" fill="#5fc680"/>
+          <text x="3.6" y="0" font-weight="700">MAJOR</text>
+        </g>
+        <g transform="translate(74,0)">
+          <rect x="0" y="-2.2" width="2.6" height="2.6" rx="0.3" fill="#e6a050"/>
+          <text x="3.6" y="0" font-weight="700">DOM7</text>
+        </g>
+        <g transform="translate(96,0)">
+          <rect x="0" y="-2.2" width="2.6" height="2.6" rx="0.3" fill="#5fb8c6"/>
+          <text x="3.6" y="0" font-weight="700">DRONE</text>
+        </g>
+        <g transform="translate(122,0)">
+          <rect x="0" y="-2.2" width="2.6" height="2.6" rx="0.3" fill="#b67cd6"/>
+          <text x="3.6" y="0" font-weight="700">WEIRD</text>
+        </g>
+      </g>
     </g>
-    <line x1="3" y1="149" x2="162" y2="149" stroke="#333" stroke-width="0.15"/>
 
-    <!-- ───── Signal chain notes ───── -->
-    <text x="3" y="153.5" font-size="2.4" font-weight="700" fill="#fff">Signal chain</text>
-    <g font-size="2.1" fill="#aaa">
-      <text x="3" y="157">K-S exciter = pulse osc on PERF SMALL (log 50–250 Hz, jittery PWM + ±0.5 % freq smear). PERF SMALL-shift = pulse gain.</text>
-      <text x="3" y="159.5">IN L summed into K-S loop input at ×0.10 (Strega-style — chord stack filters the input). IN R unused.</text>
-      <text x="3" y="162">Reverb: 32-bit float buffer in CCM, 16 allpasses, 2-pole loop damping, Haas stereo decorr at input, predelay 0..62 ms.</text>
-      <text x="3" y="164.5">OVERDRIVE end-of-chain: DC blocker → bias → drive → smooth↔hard saturator → post-LPF tone. Hard-bypassed below 0.5 % drive.</text>
-    </g>
-    <line x1="3" y1="167" x2="162" y2="167" stroke="#333" stroke-width="0.15"/>
-
-    <!-- ───── LED + I/O notes ───── -->
-    <text x="3" y="171" font-size="2.4" font-weight="700" fill="#fff">LEDs &amp; I/O · calibration</text>
-    <g font-size="2.1" fill="#aaa">
-      <text x="3"  y="174.5">Main LED unshifted: stack-zone colour (white / cyan / green / amber / orange / red). Solid red = clip.</text>
-      <text x="3"  y="177">OSC LED = page (off/grn/org/red). On OVERDRIVE: full red = active, dim red (30 %) = bypassed (drive &lt; 0.5 %).</text>
-      <text x="3"  y="179.5">V/oct cal: boot-hold button → blink grn = +1V, ylw = +3V, sld grn = saved. CV: PITCH, LPF, CHORD, PULSE. IN L = audio excite.</text>
+    <!-- ─── footer ─── -->
+    <g transform="translate(0, 134)">
+      <text x="3" y="0" class="mono" font-size="2.1" fill="#6e6457">
+        signal:  chord + bass  →  reverb  →  overdrive  →  out
+      </text>
+      <text x="3" y="4.5" class="mono" font-size="2.1" fill="#6e6457">
+        main RGB = chord colour · OSC LED = current page · red = clip
+      </text>
+      <text x="3" y="9.0" class="mono" font-size="2.1" fill="#6e6457">
+        dim breathing = section bypassed · full-bright = engaged
+      </text>
+      <text x="3" y="13.5" class="mono" font-size="2.1" fill="#6e6457">
+        v/oct cal:  OVERDRIVE page · hold button 10 s without touching knobs
+      </text>
     </g>
   </g>
+
+  <!-- credit, bottom-left of full SVG (under panel sticker) -->
+  <text x="3" y="158" class="mono" font-size="1.7"
+        fill="#9a9590">by epijdemie</text>
 
 </svg>

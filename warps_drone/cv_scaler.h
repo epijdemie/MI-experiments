@@ -11,13 +11,13 @@
 
 #include "warps/drivers/adc.h"
 #include "warps/drivers/codec.h"
-
-#include "warps/drivers/adc.h"
+#include "warps/drivers/normalization_probe.h"
 
 #include "warps_drone/dsp/parameters.h"
 #include "warps_drone/settings.h"
 
 namespace warps_drone {
+
 
 // 8-slot soft-takeover. on slot switch, snapshot pot; only write the new
 // slot once pot moves >kMoveThreshold from snapshot
@@ -68,8 +68,19 @@ class CvScaler {
   void Init(const Settings* settings);
   void Read(DroneParameters* p, ControlPage page, bool shifted);
 
-  // smoothed v/oct adc (0..1), shared with the cal ritual
-  inline float voct_raw() const { return lp_state_[warps::ADC_LEVEL_1_CV]; }
+  // smoothed v/oct adc (0..1), shared with the cal ritual.
+  //   voct_chord_raw = LVL1 CV (chord pitch)
+  //   voct_bass_raw  = PARAM CV (bass pitch)
+  inline float voct_chord_raw() const { return lp_state_[warps::ADC_LEVEL_1_CV]; }
+  inline float voct_bass_raw()  const { return lp_state_[warps::ADC_PARAMETER_CV]; }
+
+
+  // smoothed pot positions (0..1). UI uses these to detect "no knob
+  // movement" while watching for the cal-entry gesture.
+  inline float pot_big()   const { return lp_state_[warps::ADC_ALGORITHM_POT]; }
+  inline float pot_small() const { return lp_state_[warps::ADC_PARAMETER_POT]; }
+  inline float pot_lvl1()  const { return lp_state_[warps::ADC_LEVEL_1_POT]; }
+  inline float pot_lvl2()  const { return lp_state_[warps::ADC_LEVEL_2_POT]; }
 
   // main loop. persists dirty slots after kKnobSettleBlocks idle
   void MaybeSave();
@@ -85,7 +96,21 @@ class CvScaler {
   warps::Adc adc_;
   float      lp_state_[warps::ADC_LAST];
 
+
   const Settings* settings_ = nullptr;   // owned by warps_drone.cc
+
+  // Idle V/OCT semitone offset captured at boot (no cable assumed
+  // patched). Subtracted from runtime Transform so idle reads as
+  // exactly 0 semis — kills the constant detune that would otherwise
+  // shift chord/bass pitches when no cable is in.
+  float boot_offset_chord_semis_ = 0.0f;
+  float boot_offset_bass_semis_  = 0.0f;
+  // Slow second-stage LP on the V/OCT semitones — kills sub-semitone
+  // ADC jitter that otherwise modulates the K-S delays + modal-bank
+  // fundamentals every block and gets amplified into a "stretching"
+  // artifact under distortion.
+  float voct_chord_lp_ = 0.0f;
+  float voct_bass_lp_  = 0.0f;
 
   SoftTakeover8 algorithm_;
   SoftTakeover8 timbre_;

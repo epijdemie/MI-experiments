@@ -1,4 +1,5 @@
-// button: tap -> next page, hold -> shift, boot-hold -> v/oct cal.
+// button: tap -> next page, hold -> shift. v/oct cal entry: hold the
+// button for 10 s while on the OVERDRIVE page WITHOUT moving any pot.
 // osc led = page indicator. main rgb = chord / shift / clip / cal status
 
 #ifndef WARPS_DRONE_UI_H_
@@ -19,8 +20,11 @@ class Settings;
 
 enum UiMode {
   UI_MODE_NORMAL = 0,
-  UI_MODE_CALIBRATION_C1,    // +1V capture
-  UI_MODE_CALIBRATION_C3,    // +3V capture
+  UI_MODE_CALIBRATION_C1,         // +1V capture, chord input (LVL1)
+  UI_MODE_CALIBRATION_C3,         // +3V capture, chord input
+  UI_MODE_CALIBRATION_HANDOVER,   // brief LED handover, alt blink ~1s
+  UI_MODE_CALIBRATION_C1_BASS,    // +1V capture, bass input (PARAM)
+  UI_MODE_CALIBRATION_C3_BASS,    // +3V capture, bass input
   UI_MODE_CALIBRATION_OK,
   UI_MODE_CALIBRATION_ERROR,
 };
@@ -45,9 +49,14 @@ class Ui {
   void FinishCalibration();
 
   // poll @ ~1.5kHz (1 / audio block, 32 samp @ 48k)
-  static constexpr uint16_t kTapWindow              = 300;   // ~200ms
-  static constexpr uint16_t kFlashTicks             = 220;   // ~150ms
-  static constexpr uint16_t kCalibrationStatusTicks = 2200;  // ~1.5s
+  static constexpr uint16_t kTapWindow              = 300;    // ~200ms
+  static constexpr uint16_t kFlashTicks             = 220;    // ~150ms
+  static constexpr uint16_t kCalibrationStatusTicks = 2200;   // ~1.5s
+  // Cal-entry gesture: OVERDRIVE page, button hold for this long, while
+  // no pot has moved by more than kCalPotIdleThreshold from press-time.
+  static constexpr uint16_t kCalWarnTicks           = 12000;  // ~8s pulse warning
+  static constexpr uint16_t kCalEnterTicks          = 15000;  // ~10s -> enter cal
+  static constexpr float    kCalPotIdleThreshold    = 0.01f;  // 1 % of pot range
   static constexpr float    kClipThreshold = 0.95f;
 
   warps::Switches  switches_;
@@ -67,12 +76,19 @@ class Ui {
 
   UiMode       mode_                = UI_MODE_NORMAL;
   uint16_t     status_ticks_        = 0;
-  float        voct_bias_capture_   = 0.0f;
-  float        voct_c1_capture_     = 0.0f;
-  // boot-hold cal: ignore presses until physical release; that release
-  // also captures the unpatched v/oct bias as 0V anchor (PITCH must be
-  // unpatched at boot)
+  float        voct_c1_capture_      = 0.0f;   // chord
+  float        voct_c1_capture_bass_ = 0.0f;   // bass
+  float        chord_scale_pending_  = 0.0f;
+  float        chord_offset_pending_ = 0.0f;
+  // ~1 s handover blink between chord cal and bass cal.
+  static constexpr uint16_t kCalibrationHandoverTicks = 1500;
+  // When transitioning into cal mode mid-press, swallow the rest of the
+  // current hold so it doesn't immediately get read as the +1 V press.
   bool         wait_for_release_    = false;
+  // Cal-entry watcher: pot positions captured at press_edge, and a
+  // sticky abort flag set the moment any pot drifts more than threshold.
+  float        pot_at_press_[4]     = {0.0f, 0.0f, 0.0f, 0.0f};
+  bool         cal_arm_blocked_     = false;
 
   DISALLOW_COPY_AND_ASSIGN(Ui);
 };

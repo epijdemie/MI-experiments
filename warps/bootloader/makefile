@@ -45,3 +45,6 @@ RESOURCES      = warps/resources
 TOOLCHAIN_PATH ?= /usr/local/arm-4.8.3/
 
 include stmlib/makefile.inc
+
+# Quiet GCC 13 about stmlib's older C++ style (matches warps_drone makefile)
+CPPFLAGS += -Wno-register -Wno-deprecated

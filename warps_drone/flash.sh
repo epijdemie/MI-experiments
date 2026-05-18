@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
-# flash warps_drone via olimex arm-usb-ocd-h, jtag.
-# run from repo root after `TOOLCHAIN_PATH=... make -f warps_drone/makefile`
+# Flash WARPS DRONES app only (dev iteration) via Olimex ARM-USB-OCD-H.
+# Writes to 0x08008000 — leaves the bootloader at 0x08000000 untouched.
+# Use ./flash_combo.sh for a first-time install that writes both.
+#
+# Run from repo root after `TOOLCHAIN_PATH=... make -f warps_drone/makefile`.
 set -euo pipefail
 
 OCD="$HOME/opt/xpack-openocd-0.12.0-3/bin/openocd"
@@ -13,7 +16,7 @@ if [[ ! -f "$ELF" ]]; then
   exit 1
 fi
 
-# stmlib's make-all leaves .bin stale - regenerate from fresh .elf
+# stmlib's make-all leaves .bin stale — regenerate from fresh .elf.
 "$HOME/opt/arm-gnu-toolchain-13.3.rel1-darwin-arm64-arm-none-eabi/bin/arm-none-eabi-objcopy" \
   -O binary "$ELF" "$BIN"
 
@@ -22,4 +25,4 @@ fi
   -f interface/ftdi/olimex-arm-usb-ocd-h.cfg \
   -c "transport select jtag; adapter speed 1000" \
   -f target/stm32f4x.cfg \
-  -c "program $BIN verify reset exit 0x08000000"
+  -c "program $BIN verify reset exit 0x08008000"
