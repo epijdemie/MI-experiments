@@ -37,6 +37,7 @@ void Reverb::Init(uint16_t* buffer, float sample_rate) {
 
   engine_.Init(buffer);
   std::memset(lpf_state_, 0, sizeof(lpf_state_));
+  std::memset(hpf_state_, 0, sizeof(hpf_state_));
 
   parameters_.decay      = 0.5f;
   parameters_.tone       = 0.5f;
@@ -58,6 +59,11 @@ void Reverb::Tick() {
   coef_tilt_lpf_           = 0.3f + 0.68f * parameters_.tone;
   coef_mod_amplitude_      = parameters_.modulation * 0.6f;
   coef_dry_wet_            = parameters_.dry_wet;
+
+  // low_cut: 1-pole hp in each branch. 5..200 Hz log corner.
+  // k = 2π * f / fs. always slightly active so the loop can't accumulate DC
+  const float hp_hz = 5.0f * exp2f(parameters_.low_cut * 5.32f);
+  coef_low_cut_hp_  = 2.0f * static_cast<float>(M_PI) * hp_hz / sample_rate_;
 
   // modulation knob drives lfo rate too. 0.1..1.6 Hz log
   const float lfo_hz = 0.1f * exp2f(parameters_.modulation * 4.0f);
@@ -95,6 +101,7 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
   const float kap       = coef_diffusion_;
   const float kfb       = coef_feedback_;
   const float klp       = coef_tilt_lpf_;
+  const float khp       = coef_low_cut_hp_;
   const float wet       = coef_dry_wet_;
   const float ampl      = coef_mod_amplitude_;
   // size 0.4..1.4× - longest base 4421 × 1.4 = 6190 fits in 6200 reservation
@@ -109,6 +116,11 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
   float lp1 = lpf_state_[1];
   float lp2 = lpf_state_[2];
   float lp3 = lpf_state_[3];
+
+  float hp0 = hpf_state_[0];
+  float hp1 = hpf_state_[1];
+  float hp2 = hpf_state_[2];
+  float hp3 = hpf_state_[3];
 
   while (size--) {
     engine_.Start(&c);
@@ -128,6 +140,7 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
     c.WriteAllPass(ap0, kap);
     c.Interpolate(del0, tau0, LFO_1, ampl * tau0, 1.0f);
     c.Lp(lp0, klp);
+    c.Hp(hp0, khp);
     c.Write(b0, 0.0f);
 
     c.Load(wet_in);
@@ -135,6 +148,7 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
     c.WriteAllPass(ap1, -kap);
     c.Interpolate(del1, tau1, LFO_2, ampl * tau1, 1.0f);
     c.Lp(lp1, klp);
+    c.Hp(hp1, khp);
     c.Write(b1, 0.0f);
 
     c.Load(wet_in);
@@ -142,6 +156,7 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
     c.WriteAllPass(ap2, kap);
     c.Interpolate(del2, tau2, LFO_1, -ampl * tau2, 1.0f);
     c.Lp(lp2, klp);
+    c.Hp(hp2, khp);
     c.Write(b2, 0.0f);
 
     c.Load(wet_in);
@@ -149,6 +164,7 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
     c.WriteAllPass(ap3, -kap);
     c.Interpolate(del3, tau3, LFO_2, -ampl * tau3, 1.0f);
     c.Lp(lp3, klp);
+    c.Hp(hp3, khp);
     c.Write(b3, 0.0f);
 
     float branch_in[4]  = { b0, b1, b2, b3 };
@@ -182,6 +198,11 @@ void Reverb::Process(FloatFrame* in_out, size_t size) {
   lpf_state_[1] = lp1;
   lpf_state_[2] = lp2;
   lpf_state_[3] = lp3;
+
+  hpf_state_[0] = hp0;
+  hpf_state_[1] = hp1;
+  hpf_state_[2] = hp2;
+  hpf_state_[3] = hp3;
 
   // peak: instant attack, ~150ms release
   peak_ = peak_block_ > peak_ ? peak_block_ : peak_ * 0.9f;
