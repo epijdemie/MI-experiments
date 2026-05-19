@@ -37,7 +37,7 @@ system DSP compressing the signal. If the LED doesn't change within
 
 ## Cheatsheet
 
-The full knob reference lives in [`panel/cheatsheet.svg`](panel/cheatsheet.svg)
+The full knob reference lives in [`panel/drone_cheatsheet.svg`](panel/drone_cheatsheet.svg)
 a one-page summary of all four pages, chord banks, bass note tables, and the calibration ritual.
 
 Quick orientation:
